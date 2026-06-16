@@ -1,0 +1,26 @@
+{
+  "name": "chat-application",
+  "version": "1.0.0",
+  "description": "Chat application that will allow multiple users to login and chat in real time via the internet. This will allow for real-time communication. It will allow for users to sign up and log in with credentials, then add people as friends where they may chat individually or as a group.",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kevin-Nav07/Chat-Application.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Kevin-Nav07/Chat-Application/issues"
+  },
+  "homepage": "https://github.com/Kevin-Nav07/Chat-Application#readme",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "pg": "^8.21.0"
+  }
+}
