@@ -1,30 +1,10 @@
 
 
-//be able to create a get request for server-side users
-users = [
-    {
-        id: 1,
-        username: "kevin",
-        email: "kevinnaveen@"
-    },
 
-    {
-        id: 2,
-        username: "joe",
-        email: "joe@gmail.com",
-
-    },
-    {
-        id: 3,
-        username: "garrus",
-        email: "garrusvakarian@gmail.com"
-    }
-]
-
+const { Route } = require('./routes')
+const { parseJSON } = require("./Helpers")
 const http = require('node:http');//importing http module from node
 
-const port = 5042;
-const host = "localhost"
 /*http server takes an optional Options object paramater and a RequestListener function
 of form: where request is the request object representative of an IncomingMEssage object, response is a ServerResponse object
 function(request,response):void {
@@ -37,32 +17,31 @@ requestlistener function paramater will be a callback paramater, we can call cal
     or
 function (req:IncomingMessage,res:ServerResponse){}
 */
-server = http.createServer(function (req, res) {
-    if (req.method === "GET" && req.url === "/users") {
-        response = (JSON.stringify(users));
-        res.statusCode = 200;
-        res.end(response);
-    }
-    else {
-        response = {
-            message: "response"
-        }
-        res.statusCode = 404;
-        res.end(JSON.stringify(response));
-    }
-
-    console.log("connected?");
 
 
 
+server = http.createServer(async function (req, res) {
+    body = ""
+    const { method, statusCode, statusMessage, url } = parseJSON(req);
+    req.on('data', function handleChunk(chunk) {
+        body = body + chunk
+        console.log("body chunk:" + chunk)
+
+    })
+    req.on('end', () => {
+        Route(body, url, method);
+
+    })
+    req.on('error', (error) => {
+        console.log("Error encountered trying to read streamable data :\n" + error)
+    })
 
 
-
-
+    console.log("Client sent a request")
 
 });
 
-server.listen(port, host);
+
 
 server.on("connection", () => {
     console.log("Someone connected!!!")
@@ -79,3 +58,8 @@ server.on('error', (error) => {
     }
     process.exit(1);
 });
+
+
+
+
+module.exports = { server }
