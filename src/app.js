@@ -12,13 +12,22 @@ const DbPool = require('./DbPool');
 
 const { server } = require("./server");
 
+const Ajv = require("ajv")
+const ajv = new Ajv({ coerceTypes: true })//schema validaiton library
+//coercetypes allows for type conversion for string to integer
+const { createsUserSchema } = require('./Models/Schemas')
+
 
 function main() {
     //each pool will use environment variables for connection info
-    DbPool.CreatePool()
+    DbPool.createPool()
 
     server.listen(process.env.PORT, process.env.HOST);//make server start listening for connections
+
+
     console.log("Server is actively listening for connections");
+
+
 }
 
 main()

@@ -1,3 +1,6 @@
+const { APIValidator, } = require("../helpers/APIValidator")
+const { createUserPathParams, checkValidMethod } = require("../Models/PathParamaters")
+
 
 class UserController {
 
@@ -9,24 +12,48 @@ class UserController {
 
     }
 
-    ValidateParameters(searchParams, expectedParams) {
 
 
-    }
+    async handleRequest(method, body, searchParameters, pathName) {
+        const validator = new APIValidator(createUserPathParams, "createUserSchema")//this basically has two validation functions that checks the search paramaters
+        //as well as the body structure and checks according to our models if they are of the expected format
+        try {
+            if (validator.validateQueryParamaters(searchParameters) && validator.validateBodyFormat(body) && checkValidMethod(method)) {//if body and search params are of the expected 
 
-    async handleRequest(method, body, searchParameters) {
-        if (method.trim() === "GET") {
-            if (searchParameters === undefined) {
-                return await this.GetUserAsync()
+                switch (method) {
+                    case "GET":
+
+                        if ()
+                            break;
+                    case "POST":
+
+                        break;
+                    case "DELETE":
+                        break;
+                    case "PUT":
+                        break;
+                }
             }
-            else if (searchParameters.has("userid")) {
-
-
-
-
-                return await this.GetUserAsync(searchParameters.get("userid"))
+            else {
+                return "Bad Request"
             }
         }
+        catch (error) {
+            console.log("encountered error with handling the request" + error);
+        }
+
+        // if (method.trim() === "GET") {
+        //     if (searchParameters === undefined) {
+        //         return await this.GetUserAsync()
+        //     }
+        //     else if (searchParameters.has("userid")) {
+
+
+
+
+        //         return await this.GetUserAsync(searchParameters.get("userid"))
+        //     }
+        // }
 
 
     }

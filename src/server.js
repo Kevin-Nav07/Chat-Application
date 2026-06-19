@@ -1,9 +1,10 @@
 
 
 
-const { Route } = require('./routes')
-const { parseJSON } = require("./Helpers")
+const { route } = require('./routes')
+const { parseJSON } = require("./helpers/Parsers")
 const http = require('node:http');//importing http module from node
+const { validateURLFormat } = require('./helpers/APIValidator');
 
 /*http server takes an optional Options object paramater and a RequestListener function
 of form: where request is the request object representative of an IncomingMEssage object, response is a ServerResponse object
@@ -21,15 +22,25 @@ function (req:IncomingMessage,res:ServerResponse){}
 
 
 server = http.createServer(async function (req, res) {
-    body = ""
-    const { method, statusCode, statusMessage, url } = parseJSON(req);
+    let body = ""
+
     req.on('data', function handleChunk(chunk) {
         body = body + chunk
         console.log("body chunk:" + chunk)
 
     })
     req.on('end', () => {
-        Route(body, url, method);
+        try {
+            const { method, statusCode, statusMessage, url } = parseJSON(req);
+            body = JSON.parse(body)
+
+
+            route(body, url, method);
+        }
+        catch (e) {
+            console.log("problem parsing request into an object" + e)
+        }
+
 
     })
     req.on('error', (error) => {

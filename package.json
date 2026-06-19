@@ -20,6 +20,7 @@
   },
   "homepage": "https://github.com/Kevin-Nav07/Chat-Application#readme",
   "dependencies": {
+    "ajv": "^8.20.0",
     "dotenv": "^17.4.2",
     "pg": "^8.21.0"
   }

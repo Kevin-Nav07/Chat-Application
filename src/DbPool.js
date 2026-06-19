@@ -9,7 +9,7 @@ const { Pool, Client } = require("pg")  // Load environment variables from .env 
 class DbPool {
     static pool
 
-    static CreatePool() {
+    static createPool() {
         this.pool = new Pool({ //connecting to a db pool for pg driver directly
             user: process.env.PGUSER,
             password: process.env.PGPASSWORD,
@@ -31,7 +31,7 @@ class DbPool {
     }
 
 
-    static async ProvideClient() {//from the connection pool provide a new client
+    static async provideClient() {//from the connection pool provide a new client
         return await this.pool.connect()
     }
 

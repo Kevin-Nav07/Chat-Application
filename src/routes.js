@@ -1,16 +1,11 @@
 
 
 UserController = require('./controllers/UserController')
-const DbPool = require('./DbPool')
+const DbPool = require('./DbPool');
+const { validateURLFormat } = require('./helpers/APIValidator');
+const { parseUrl } = require('./helpers/Parsers')
 
-function ParseUrl(url, url_host) {
-    const url_obj = URL.parse(`http://${url_host}${url}`)//put it into aurl object which will naturally destructure it into parts
-    path_name = url_obj.pathname
-    search = url_obj.search
-    searchParameters = url_obj.searchParams
-    return { path_name, search, searchParameters }
 
-}
 
 //we need a class or set of functions that take the server's route, and calls the apropriate handler/controller
 //we need the request object, which we can parse through another layer before routing.
@@ -20,22 +15,43 @@ function ParseUrl(url, url_host) {
 //router class will have a single instance which will
 
 
-async function Route(body, url, method) {
+async function route(body, url, method) {
+    const userRegex = '/^\/users(\/[0-9]+)?$/gmi';
+
     console.log(url)
-    const { path_name, search, searchParameters } = ParseUrl(url);
-    console.log(path_name, search, searchParameters);
+    try {
+        const { pathName, search, searchParameters } = parseUrl(url);
+        validateURLFormat(pathName, search)
+
+        console.log(pathName, search, searchParameters);
+    }
+    catch (e) {
+        console.log("problem parsing the api call url" + e);
+    }
+
+
+    //extract pathParamaters out of the PathName
+    //path paramaters are of form /someWord/.....
+    //after the second slash extract the contents
 
 
 
-    if (path_name.trim() == "/users") {
+    //*******************Routing *************** *///
+    getByIdRegex = ''
+
+
+    //must have /user first and then /number after
+
+    if (pathName.trim().match(userRegex)) {//checks if the pathName is of format /user/:id or /user
         //route to user controller
-        controller = new UserController(await DbPool.ProvideClient());
-        console.log(await controller.handleRequest(method, body, searchParameters))
+        controller = new UserController(await DbPool.provideClient());
+        console.log(await controller.handleRequest(method, body, searchParameters, pathName))//let the controller deal with this request
 
     }
+
 
 
 }
 
 
-module.exports = { Route }
+module.exports = { route }
