@@ -9,6 +9,7 @@ require('dotenv').config();//this line loads the environemnt variables into proc
 
 const http = require('node:http');//importing http module from node
 const DbPool = require('./DbPool');
+const { registerAllRoutes } = require("./Router");
 
 const { server } = require("./server");
 
@@ -20,11 +21,9 @@ const { createsUserSchema } = require('./Models/Schemas')
 
 function main() {
     //each pool will use environment variables for connection info
-    DbPool.createPool()
-
+    DbPool.createPool();
+    registerAllRoutes();
     server.listen(process.env.PORT, process.env.HOST);//make server start listening for connections
-
-
     console.log("Server is actively listening for connections");
 
 

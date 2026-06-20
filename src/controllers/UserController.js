@@ -14,49 +14,51 @@ class UserController {
 
 
 
-    async handleRequest(method, body, searchParameters, pathName) {
-        const validator = new APIValidator(createUserPathParams, "createUserSchema")//this basically has two validation functions that checks the search paramaters
-        //as well as the body structure and checks according to our models if they are of the expected format
+    async handleRequest(method, body, searchParameters, pathName, handler, pathParams) {
+        //take the request and handle it by validating any relevant query paramaters or body if needed
+        console.log("Handling request");
+
         try {
-            if (validator.validateQueryParamaters(searchParameters) && validator.validateBodyFormat(body) && checkValidMethod(method)) {//if body and search params are of the expected 
 
-                switch (method) {
-                    case "GET":
+            switch (method) {
+                case "GET":
 
-                        if ()
-                            break;
-                    case "POST":
 
-                        break;
-                    case "DELETE":
-                        break;
-                    case "PUT":
-                        break;
-                }
-            }
-            else {
-                return "Bad Request"
+                    break;
+                case "POST":
+                    const validator = new APIValidator(createUserPathParams, "createUserSchema")//this basically has two validation functions that checks the search paramaters
+                    //as well as the body structure and checks according to our models if they are of the expected format
+                    if (validator.validateQueryParamaters(searchParameters) && validator.validateBodyFormat(body) && checkValidMethod(method)) {//if body and search params are of the expected 
+
+                    }
+                    break;
+                case "DELETE":
+                    break;
+                case "PUT":
+                    break;
             }
         }
         catch (error) {
-            console.log("encountered error with handling the request" + error);
+            return "Bad Request"
         }
-
-        // if (method.trim() === "GET") {
-        //     if (searchParameters === undefined) {
-        //         return await this.GetUserAsync()
-        //     }
-        //     else if (searchParameters.has("userid")) {
-
-
-
-
-        //         return await this.GetUserAsync(searchParameters.get("userid"))
-        //     }
-        // }
-
-
     }
+
+
+    // if (method.trim() === "GET") {
+    //     if (searchParameters === undefined) {
+    //         return await this.GetUserAsync()
+    //     }
+    //     else if (searchParameters.has("userid")) {
+
+
+
+
+    //         return await this.GetUserAsync(searchParameters.get("userid"))
+    //     }
+    // }
+
+
+
 
     async GetUserAsync(userid) {
         try {
