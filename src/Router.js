@@ -1,10 +1,12 @@
 
 
-UserController = require('./controllers/UserController')
-const DbPool = require('./DbPool');
-const { validateURLFormat, checkValidMethod } = require('./helpers/APIValidator');
+UserController = require('./Controllers/UserController')
+
+const { validateURLFormat, checkValidMethod, validatePathParamTypes } = require('./helpers/APIValidator');
 const { parseUrl } = require('./helpers/Parsers')
+const DbPool = require('./DbPool');
 const routeList = require('./Models/Routes');
+const { ValidationError } = require('ajv');
 
 
 //we need a class or set of functions that take the server's route, and calls the apropriate handler/controller
@@ -33,11 +35,12 @@ function registerRoute(routeObject) {
         }
         else {
             paramaterName = paramater.substring(paramater.indexOf(":") + 1).trim();
-            expression = (`(?<${paramaterName}>[0-9]|[a-z])+`);
+            expression = (`(?<${paramaterName}>([0-9]|[a-z])+)`);
         }
         return expression
     });
-    urlRegex = new RegExp("^" + urlRegex + "$", "i");
+    urlRegex = new RegExp("^" + urlRegex + "$", "mi");//add ^ and $ to show we want the whole line to be a match
+    //NOTE: do not use the g-global flag as using the global flag means using .match() with a string will return an object without capturing any named gorups
     console.log(urlRegex);
 
     routeObject.urlRegex = urlRegex
@@ -58,7 +61,7 @@ function registerAllRoutes() {
 
 
 async function route(body, url, method) {
-    const userRegex = '/^\/users(\/[0-9]+)?$/gmi';
+
 
     console.log("URL:" + url)
     try {
@@ -73,30 +76,33 @@ async function route(body, url, method) {
 
             if (route.method === method && match) {//this checks if the url method and the url path match any of our routes
                 //we will let the actual specific controller do query paramater and body validation
-                pathParams = match.groups
-                console.log(pathParams);
-                console.log(route.method, route.handler, route.controller)
-                controller = new route.controller()
-                controller.handleRequest(method, body, searchParameters, pathName, route.handler, pathParams);
+                pathParams = match.groups;
+
+
+
+                console.log("Path params:" + match, "routing method: " + route.method, "routing handler: " + route.handler)
+                controller = new route.controller(await DbPool.provideClient())
+                return await controller.handleRequest(method, body, searchParameters, pathName, route.handler, pathParams, route.schema, route.expectedPathTypes);
             }
 
         }
+
+        console.log("Could not find API endpoint", url, method);
+        return { responseStatusCode: 400, responseBody: "URL does not match registered routes" }
     }
     catch (e) {
+        //if(e instanceof ValidationError)
         console.log("problem parsing the api call url" + e);
+        return { responseStatusCode: 500, responseBody: "Unexpected error occured on server side" };
     }
 
 
     //extract pathParamaters out of the PathName
     //path paramaters are of form /someWord/.....
     //after the second slash extract the contents
-
-
-
     //*******************Routing *************** *///
+
     getByIdRegex = ''
-
-
 
     //must have /user first and then /number after
 
@@ -106,9 +112,7 @@ async function route(body, url, method) {
     //     console.log(await controller.handleRequest(method, body, searchParameters, pathName))//let the controller deal with this request
 
     // }
-
-
-
 }
+
 
 module.exports = { route, registerAllRoutes }

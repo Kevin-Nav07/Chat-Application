@@ -1,40 +1,50 @@
-const UserController = require('../controllers/UserController');
+const UserController = require('../Controllers/UserController');
 
 const routeList = [{
     method: "GET",
     url: "/users/:id",
     controller: UserController,
-    handler: "getUser"
+    handler: "getUserAsync",
+    schema: null,
+    expectedPathTypes: { id: "number" }
 },
 {
     method: "GET",
     url: "/users",
     controller: UserController,
-    handler: "getUsers"
+    handler: "getUsersAsync",
+    schema: null
 },
 {
     method: "PUT",
-    url: "/users",
+    url: "/users/:id",
     controller: UserController,
-    handler: "updateeUser"
+    handler: "updateUserAsync",
+    schema: "updateUserSchema",
+    expectedPathTypes: { id: "number" }
 },
 {
     method: "POST",
-    url: "/users/:id",
+    url: "/users",
     controller: UserController,
-    handler: "creatUsers"
+    handler: "createUserAsync",
+    schema: "createUserSchema"
 },
 {
     method: "DELETE",
     url: "/users/:id",
     controller: UserController,
-    handler: "deleteUser"
+    handler: "deleteUserAsync",
+    schema: null,
+    expectedPathTypes: { id: "number" }
 },
 {
     method: "GET",
     url: "/users/:id/getting/:name/resource",
     controller: UserController,
-    handler: "getUserAlls"
+    handler: "getUserAllAsync",
+    schema: null,
+    expectedPathTypes: { id: "number", name: "string" }
 }]
 
 module.exports = routeList
