@@ -6,7 +6,7 @@ const { parseJSON } = require("./helpers/Parsers")
 const http = require('node:http');//importing http module from node
 const { validateURLFormat } = require('./helpers/APIValidator');
 const { type } = require('node:os');
-
+const WebSocket = require('ws');
 /*http server takes an optional Options object paramater and a RequestListener function
 of form: where request is the request object representative of an IncomingMEssage object, response is a ServerResponse object
 function(request,response):void {
@@ -116,6 +116,42 @@ server.on('error', (error) => {
     process.exit(1);
 });
 
+
+//**************WEB SOCKET SERVEr ****************/
+
+const wss = new WebSocket.Server({ server: server });//wss is the websocket server that listens for incomign websocket connections
+
+//wss
+wss.on('connection', (ws) => {//for every connection there is a ws(websocket) object for that connection
+    console.log("Connected");
+
+    //primary events: message,close,error
+    ws.on('message', (data) => {
+        //data is in form Buffer
+        data = data.toString("utf-8");//can convert a Buffer to a string like this
+        //ws.id is how you give connections unique id's
+        wss.clients.forEach((ws2) => {
+            if (ws2 !== ws) {
+
+                ws2.send(data);
+            }
+
+
+        })
+        console.log("New Message: ", data);
+        if (data.toLowerCase().trim() === 'close') {
+            ws.close();
+        }
+    })//WebSocket object inherits from EventEmitter, so it can emit events
+
+    ws.on('close', () => {
+        console.log("Conneciton closed by client");
+    })
+})
+
+wss.on('error', (error) => {
+    console.log("Encountered error with websocket server", error);
+})
 
 
 
