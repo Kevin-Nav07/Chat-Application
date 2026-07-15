@@ -1,10 +1,9 @@
-const { validateAdditionalItems } = require("ajv/dist/vocabularies/applicator/additionalItems");
-const { validatePathParamTypes, APIValidator } = require("../helpers/APIValidator")
-const { getUserQueryParams, getUsersQueryParams } = require("../Models/QueryParamaters")
+
+const { validatePathParamTypes, validateBodyFormat, validateSearchParamTypes } = require("../helpers/APIValidator")
+
 
 const UserService = require('../Services/UserService');
 const { DatabaseError } = require("pg");
-const { ValidationError } = require("ajv");
 
 
 class UserController {
@@ -26,7 +25,8 @@ class UserController {
         try {
             console.log(pathParams, searchParams);
             const { id } = pathParams//destructurng over an object requires thi syntax
-            const [filter = null] = searchParams//destructuring over an iterable requires this syntax
+            //const [filter = null] = searchParams//destructuring over an iterable requires this syntax
+            const { filter } = searchParams
 
             console.log(filter)
             console.log(id);
@@ -58,7 +58,7 @@ class UserController {
 
         try {
 
-            const [filter = null] = searchParams
+            const { filter } = searchParams
             console.log(filter)
             const users = await this._service.GetUsersAsync(filter);
             if (Array.isArray(users) && users.length > 0) {//users is an array and users has a length greater than 1
@@ -135,7 +135,7 @@ class UserController {
     }
 
 
-    async handleRequest(method, body, searchParams, pathName, handler, pathParams, schema, expectedPathTypes) {
+    async handleRequest(method, body, searchParams, pathName, handler, pathParams, schema, expectedPathTypes, expectedSearchParamType) {
         //take the request and handle it by validating any relevant query paramaters or body if needed
         //we come in with a method,body(optional), searchParamaters(optional), pathName, handler, pathParams(optional)
         //we can either route by the method and then call the handler and pass in the appropriate paramaters.
@@ -150,62 +150,46 @@ class UserController {
         for each pathParamater set we pass in we can assume it is the correct pathParams since we did validation beforehand
         //before we pass in, we need to use our ApiValidator class to validate queryParams and Body Schema(this is only needed if there is)
         */
+        try {
+            validatePathParamTypes(expectedPathTypes, pathParams);
+            searchParams = validateSearchParamTypes(expectedSearchParamType, searchParams);
+            validateBodyFormat(schema, body);
+            console.log("after search:", searchParams)
+
+        }
+        catch (error) {
+            console.log("error valdiating pathParams and SearchParamTypes", error);
+            return { responseStatusCode: 400, responseBody: error.message };
 
 
+        }
+        console.log("Path paramters are of valid type");
         try {
 
-            let validator
-            console.log("before:", pathParams)
-            validatePathParamTypes(expectedPathTypes, pathParams);
-            console.log("after: ", pathParams)
-
-            console.log("Path paramters are of valid type");
             switch (method) {
                 case "GET"://call the handler and pass in the pathParams and handler
-
-                    if (pathParams === null || pathParams === undefined) {
-                        validator = new APIValidator(getUsersQueryParams)
-                    }
-                    else {
-                        validator = new APIValidator(getUserQueryParams)
-                    }
-
-                    if (validator.validateQueryParamaters(searchParams)) {
-                        return this[handler]({ pathParams, searchParams })//this is how you call a function of a class instance when that function is stored as a string
-                    }
-
-
+                    return this[handler]({ pathParams, searchParams })//this is how you call a function of a class instance when that function is stored as a string
                     break;
                 case "POST":
-                    validator = new APIValidator(null, schema)//this basically has two validation functions that checks the search paramaters
-                    //as well as the body structure and checks according to our models if they are of the expected format
-                    if (validator.validateBodyFormat(body)) {//if body and search params are of the expected 
-                        return this[handler]({ body })//create function
-                    }
-                    else {
-                        return { responseStatusCode: 400, responseBody: "Body not of correct format" };
-                    }
-
+                    return this[handler]({ body })//create function
                     break;
                 case "DELETE":
                     //does not need body or searchParam validation
                     return this[handler]({ pathParams })
-
                     break;
                 case "PUT":
-                    validator = new APIValidator(null, schema)
-                    if (validator.validateBodyFormat(body)) {
-                        return this[handler]({ body, pathParams })
-                    }
+                    return this[handler]({ body, pathParams })
                     break;
                 default:
                     console.log("request does not match a method in the user controller");
+                    return { responseStatusCode: 400, responseBody: "Request does not match a method in the user controller" }
                     break;
 
             }
         }
         catch (error) {
             console.log("Bad request", error)
+            return { responseStatusCode: 500, responseBody: "Request does not match a method in the user controller" }
         }
     }
 

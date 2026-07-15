@@ -1,4 +1,6 @@
 const UserController = require('../Controllers/UserController');
+const RoomController = require('../Controllers/RoomController');
+
 
 const routeList = [{
     method: "GET",
@@ -6,14 +8,17 @@ const routeList = [{
     controller: UserController,
     handler: "getUserAsync",
     schema: null,
-    expectedPathTypes: { id: "number" }
+    expectedPathTypes: { id: "number" },
+    expectedSearchParamTypes: { filter: "string" }
 },
 {
     method: "GET",
     url: "/users",
     controller: UserController,
     handler: "getUsersAsync",
-    schema: null
+    schema: null,
+    expectedPathTypes: null,
+
 },
 {
     method: "PUT",
@@ -21,14 +26,17 @@ const routeList = [{
     controller: UserController,
     handler: "updateUserAsync",
     schema: "updateUserSchema",
-    expectedPathTypes: { id: "number" }
+    expectedPathTypes: { id: "number" },
+    expectedSearchParamTypes: null
 },
 {
     method: "POST",
     url: "/users",
     controller: UserController,
     handler: "createUserAsync",
-    schema: "createUserSchema"
+    schema: "createUserSchema",
+    expectedPathTypes: null,
+    expectedSearchParamTypes: null
 },
 {
     method: "DELETE",
@@ -36,15 +44,27 @@ const routeList = [{
     controller: UserController,
     handler: "deleteUserAsync",
     schema: null,
-    expectedPathTypes: { id: "number" }
+    expectedPathTypes: { id: "number" },
+    expectedSearchParamTypes: null
+},
+{
+    method: "POST",
+    url: "/rooms",
+    controller: RoomController,
+    handler: "createRoomAsync",
+    schema: 'createRoomSchema',
+    expectedPathTypes: null,
+    expectedSearchParamTypes: null
 },
 {
     method: "GET",
-    url: "/users/:id/getting/:name/resource",
-    controller: UserController,
-    handler: "getUserAllAsync",
+    url: "/rooms",
+    controller: RoomController,
+    handler: "getRoomsAsync",
     schema: null,
-    expectedPathTypes: { id: "number", name: "string" }
-}]
+    expectedPathTypes: null,
+    expectedSearchParamTypes: { id: "number" }
+}
+]
 
 module.exports = routeList

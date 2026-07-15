@@ -1,12 +1,16 @@
 
 
-UserController = require('./Controllers/UserController')
+//****************Register all controllers here ************/
+UserController = require('./Controllers/UserController');
+RoomController = require('./Controllers/RoomController');
+
 
 const { validateURLFormat, checkValidMethod, validatePathParamTypes } = require('./helpers/APIValidator');
 const { parseUrl } = require('./helpers/Parsers')
 const DbPool = require('./DbPool');
 const routeList = require('./Models/Routes');
-const { ValidationError } = require('ajv');
+
+
 
 
 //we need a class or set of functions that take the server's route, and calls the apropriate handler/controller
@@ -18,7 +22,7 @@ const { ValidationError } = require('ajv');
 
 
 function registerRoute(routeObject) {
-    //takes in a url, adds it to the list of routes and generates a regex for that specific route
+    //takes in routingObject, generates a regex and adds it to the list of routes
     //when an incoming route comes, we will compare the regex
     ///from a url how do we generate a REGEX
     //user/new/:id
@@ -76,13 +80,13 @@ async function route(body, url, method) {
 
             if (route.method === method && match) {//this checks if the url method and the url path match any of our routes
                 //we will let the actual specific controller do query paramater and body validation
-                pathParams = match.groups;
+                pathParams = match.groups;//extraction of pathParamaters using our regex pattern
 
 
 
                 console.log("Path params:" + match, "routing method: " + route.method, "routing handler: " + route.handler)
                 controller = new route.controller(await DbPool.provideClient())
-                return await controller.handleRequest(method, body, searchParameters, pathName, route.handler, pathParams, route.schema, route.expectedPathTypes);
+                return await controller.handleRequest(method, body, searchParameters, pathName, route.handler, pathParams, route.schema, route.expectedPathTypes, route.expectedSearchParamTypes);
             }
 
         }

@@ -13,7 +13,7 @@ class UserService {
     async getUserAsync(id) {
         try {
             await this._dbClient.query('BEGIN')
-            let result = await this._dbClient.query('SELECT * FROM USERS WHERE userid=$1', [id])//perform query with prepared statement
+            let result = await this._dbClient.query('SELECT * FROM USERS WHERE id=$1', [id])//perform query with prepared statement
             //result variable stores the result object, which contains a lot of database information we can limit down to just the objects
             await this._dbClient.query('COMMIT')
             return result.rows[0]//the array of objects we get back from the database
@@ -54,11 +54,11 @@ class UserService {
     }
 
     async createUserAsync(body) {
-        const { userid, email, username, passwordHash } = body
+        const { email, username, passwordHash } = body
         try {
             await this._dbClient.query('BEGIN')
-            const values = [userid, email, username, passwordHash]
-            let result = await this._dbClient.query(`INSERT INTO USERS (userid,email,username,passwordhash) VALUES($1,$2,$3,$4)`, values)//perform query with prepared statement
+            const values = [email, username, passwordHash]
+            let result = await this._dbClient.query(`INSERT INTO USERS (email,username,passwordhash) VALUES($1,$2,$3)`, values)//perform query with prepared statement
             //result variable stores the result object, which contains a lot of database information we can limit down to just the objects
             await this._dbClient.query('COMMIT')
             return result.rows//the array of objects we get back from the database
@@ -79,7 +79,7 @@ class UserService {
         try {
             await this._dbClient.query('BEGIN')
             const values = [id, email, username, passwordHash]
-            let result = await this._dbClient.query(`UPDATE USERS SET email=$2, username=$3, passwordHash=$4 WHERE userid=$1`, values)//perform query with prepared statement
+            let result = await this._dbClient.query(`UPDATE USERS SET email=$2, username=$3, passwordHash=$4 WHERE id=$1`, values)//perform query with prepared statement
             //result variable stores the result object, which contains a lot of database information we can limit down to just the objects
             await this._dbClient.query('COMMIT')
             if (result.rowCount == 0) {
@@ -106,7 +106,7 @@ class UserService {
         try {
             await this._dbClient.query('BEGIN')
 
-            let result = await this._dbClient.query(`DELETE FROM USERS WHERE userid = $1 RETURNING *`, [parseInt(id)])//perform query with prepared statement
+            let result = await this._dbClient.query(`DELETE FROM USERS WHERE id = $1 RETURNING *`, [parseInt(id)])//perform query with prepared statement
             //result variable stores the result object, which contains a lot of database information we can limit down to just the objects
             await this._dbClient.query('COMMIT')
             if (result.rowCount == 0) {

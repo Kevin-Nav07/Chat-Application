@@ -4,7 +4,7 @@ const createUserSchema = {
     //the allof and not keywords basically ensure that type coerceions go a single way
     type: "object",
     properties: {
-        userid: { type: "integer" },
+
         email: {
             allOf: [
                 { not: { type: "number" } },
@@ -24,7 +24,7 @@ const createUserSchema = {
             ]
         }
     },
-    required: ["userid", "email", "username", "passwordHash"],
+    required: ["email", "username", "passwordHash"],
     additionalProperties: false
 
 }
@@ -57,4 +57,36 @@ const updateUserSchema = {
 
 }
 
-module.exports = { createUserSchema, updateUserSchema }
+//*********************** Rooms******************************** */
+const createRoomSchema = {
+    type: "object",
+    properties: {
+        room_type: {
+            allOf: [
+                { not: { type: "number" } },
+                { type: "string" }
+            ]
+
+        },
+        name: {
+            allOf: [
+                { not: { type: "number" } },
+                { type: "string" }
+            ]
+
+        },
+        users: {//an array of user ids
+            type: "array",
+            maxItems: 10,//max number of users for a single room
+            uniqueItems: true, // ensures the items of the array are unique to prevent duplication
+            items: { type: "integer" },
+
+        }
+
+
+    },
+    required: ["room_type", "name", "users"]
+}
+
+
+module.exports = { createUserSchema, updateUserSchema, createRoomSchema }

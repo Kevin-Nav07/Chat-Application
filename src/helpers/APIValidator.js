@@ -73,7 +73,7 @@ function validatePathParamTypes(expectedParamTypes, actualParams) {
         for (const key in actualParams) {
             //if expected param is a number, then make sure to try and convert and then store it in the actual type
             if (expectedParamTypes[key] !== undefined) {//check if key,value is in expected type
-                if (expectedParamTypes[key] === 'number')//if expected type is number 
+                if (expectedParamTypes[key] === 'number') { //if expected type is number 
 
                     if (isNumeric(actualParams[key])) {//actual type is a number
 
@@ -82,6 +82,7 @@ function validatePathParamTypes(expectedParamTypes, actualParams) {
                     else {//actual type is not a number, throw error
                         throw new Error("path paramater expected to be a number but was not")
                     }
+                }
                 else if (expectedParamTypes[key] === 'string') {//expected type is a string
                     if (isNumeric(actualParams[key]))//actual is a number
                     {
@@ -104,78 +105,97 @@ function validatePathParamTypes(expectedParamTypes, actualParams) {
     }
 }
 
+function validateSearchParamTypes(expectedSearchParamTypes, actualSearchParams) {
+    //Takes in an object expectedSearchParamTypes and an iterable URLSearchParam called actualSearchParams and returns an object version
+    //of actualSearchparams with values converted
+    //takes in actualSearchParams(an iterable), iterate through and then for each actualSearchParam, checks if it is in the expectedSearchParamTypes,
+    //if it is in the expected, compare their types by comparing the type of the value of the search paramater to the expectedSearchParamType,
+    //if it is not in the expected searchParamTypes, return False
 
 
-class APIValidator {
-    //takes in a set of validation rules for queryParamaters
-    //takes in a set of validation rules for body structure
-
-    queryParamsMap;
-    schemaValidator;
-    //from the body map 
-
-    constructor(queryParams = null, schemaName = null) {
-        //queryParams must be an iterable of key-value pairs of their associated data type(string or integer)
-        if (schemaName !== null) {
-            this.schemaValidator = ajv.getSchema(schemaName)
-        }
-        else {
-            this.schemaValidator = null;
-        }
-
-        if (queryParams !== null) {
-            this.queryParamsMap = new Map(Object.entries(queryParams));
-        }
-        else {
-            this.queryParamsMap = null
-        }
-
+    searchParamObject = Object.fromEntries(actualSearchParams);
+    if (actualSearchParams === null || actualSearchParams === undefined) {//if the actual params are not specified
+        return searchParamObject
     }
-
-    validateQueryParamaters(otherParams) {//given another set of queryParamaters(an iterable)
-        //since query paramaters are optional, we iterate through what we get incoming and see if it is in the allowable set(queryParamsMap)
-        //if it is, then we check the types and ensure the expected matcehs reality
-        if (this.queryParamsMap === null) {
-            return true;
+    else {//if the paramaters are specified
+        if (expectedSearchParamTypes === null)//if the expected params are none
+        {
+            return searchParamObject
         }
+        else {//if we do expect some paramaters, now we check if the expected matches the actual
 
-        const incomingParams = new Map(otherParams.entries())
-        console.log(otherParams.entries)
-        for (const [key, value] of incomingParams) {
-            if (this.queryParamsMap.has(key)) {
-                //if the value is a number, then try to convert and see
 
-                if (Number.isFinite(this.queryParamsMap.get(key)) && isNumeric(value)) {//checks if the expected value is a number and the real value is also a number
-                    continue
-                }
+            for (const [key, value] of actualSearchParams) {
+                //if the key expects in 
+                if (key in expectedSearchParamTypes) {//if the search paramater exists in the expected, then check type
 
-                else if (typeof this.queryParamsMap.get(key) === 'string' && typeof value === 'string' && !isNumeric(value)) {//if the expected value is a string
-                    continue
+
+                    if (expectedSearchParamTypes[key] === 'number') { //if expected type is number 
+
+                        if (isNumeric(value)) {//actual type is a number
+
+                            searchParamObject[key] = Number(value);
+
+                        }
+                        else {//actual type is not a number but a string, so validation fails
+                            throw new Error("search paramater expected to be a number but was not")
+                        }
+                    }
+                    else if (expectedSearchParamTypes[key] === 'string') {//expected type is a string
+                        if (isNumeric(value))//actual is a number
+                        {
+                            throw new Error("search parameter expected to be a string but was a number")
+                        }
+                        //expected type is a string, so we leave it and do nothing,Validation passes
+
+                    }
+
                 }
                 else {
-                    return false
+                    throw new Error("search paramater is not in the expected search paramaters");
                 }
+
             }
-            else {
-                return false
-            }
-        }
-        return true
-    }
-    validateBodyFormat(otherBody) {
-        if (this.schemaValidator === null) {
-            return true
+            return searchParamObject //all the search paramaters we recieved are expected
+
         }
 
-        if (typeof otherBody === "object" && validation && this.schemaValidator(otherBody)) {
-            return true
-        }
-        else {
 
-            return false
-        }
 
     }
+
 }
 
-module.exports = { validateURLFormat, checkValidMethod, validatePathParamTypes, APIValidator }
+function validateBodyFormat(schemaName, otherBody) {
+    //check whether or not the body is of the correct format of the schema
+    /*
+    case 1: schema is defined
+       - a body is expected and the incoming body matches the schema(return True)
+       - a body is expected and the incoming body does not match the schema(throw error)
+       - a body is expected but there is no body(throw error)
+    case 2: a schema is not defined:
+        - a body is not expected but one is sent(ignore)
+        -a body is not expected but one is not sent(continue)
+    case 3: 
+
+    */
+
+    if (schemaName === null || schemaName === undefined) {//no schema defined
+        return true
+    }
+    else {//schema is defined
+
+        schemaValidator = ajv.getSchema(schemaName)//retrieves the schema valdiator from the cache
+        if (otherBody !== null && typeof otherBody === "object" && validation && schemaValidator(otherBody)) {//matches schema
+            return true
+        }
+        else {//
+
+            throw new Error("Schema Validation Failed, body was not of the correct format")
+        }
+    }
+
+}
+
+
+module.exports = { validateURLFormat, checkValidMethod, validatePathParamTypes, validateSearchParamTypes, validateBodyFormat }
