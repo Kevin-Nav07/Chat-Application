@@ -69,3 +69,73 @@ What is better is to create an index for user_id, so that the database has its u
     - Removed API Validator and reduced it to functions, there was no need to have a class, so I cleaned up a lot of the handler function in the controller.
     -Adjusted schema validation 
     - created controller for Rooms, allowed CreateRoom Functionality, created schema for POST for Rooms
+
+
+# Juky 15th
+
+## What I plan
+
+Today I plan to figure out how users apart of a room can establish a websocket connection to that room. I will need to design a workflow from front-to-back end that simulates a user clicking a chat and establishing a ws connection with the members of that room. I need to figure out how web socket connections can be dedicated to specific users, every web socket connction belongs to a room, and I need to find out how messages sent on a web socket connection from the client must be relayed to web socket connections in the room ONLY. 
+
+## What I have Done
+
+## What I Learned
+
+# July 16th
+
+## What I Plan
+- Learn about pub/sub
+- learn what Redis is
+-Learn how to send additonal information
+
+Right now I know that every user must retrieve all the rooms they are part of, these rooms must have some sort of notification system to alert for new messages. Right now the server has to store the current web socket connections. When a user enters a chat they begin a webosocket connection. The server must store all the current web socket connections so as to relay information when needed. 
+
+### Idea 1
+The current proposition is to store in a map where keys are rooms and each room has a list of web socket connections to relay. When the user joins a chat the server adds the web socket connection to that specific room. Every time a single user sends a message, the server recieves and broadcasts it to web socket connections in that given room, but each web socket connection won't have a room linked to it unless we send it with each message, which is another problem. 
+
+### Idea 3
+Another method I read about was to store by user id then to use Reddis to handle the room subscription
+
+## What I Have Done
+
+-looked into redis, looked into pub/sub decided to go forward with it
+
+Tommorow I will need to look into reddis more on how to set it up, connect it, do basic queries, and how to do the pub/sub feature. I will alsop need to look into how I will be storing web socket connections as well as
+    -How each server knows about connections and rooms, how a web socket connection can send additional information
+## What I Learned
+
+Reddis allows for servers to subscribe with information
+
+### What is Redis and How Does it Work
+Big requests of information from a server to a DB can take a long time,redis cache basically stores data in a redis cache instance and this data comes from the RAM of a server which hosts the redis instance so the server skips the DB call and goes straight to redis.
+
+When a server needs data and redis does not have it, then eithe redis or the web server asks the database and then the cache inr edis is filled so if the next request comes, we will have the data and the retrieval will be faster.
+
+# July 17th
+
+
+## What I Plan
+    -Go Through Redis course
+    -Figure Out and Implement Redis
+    -Figure out how application can store room and user data from web socket
+
+## What I have Done
+    - Learned about Redis
+    -Connected to Redis
+    - learned about heart ping/pong pattern and put it in the websocket
+    - put binary data unpacking in server.js
+    -Looked into and implemented password hashing(sign up only)
+    - when sending messages we will send as binary to simulate json messages which will contain message and room_id. user_id or token will be sent on the initial web socket handshake most likely with cookies or some other authorization technique.
+
+## What I Learned
+
+### Pub/Sub
+In pub/sub we have a publisher that has different topics, these topics in our case which can be subscribed to by clients are rooms. These rooms are dependant on what rooms are in the database. When a server subscribes it is because one of the server's clients locally are listening to a specific room, and so they want to know to recieve information from that room.  Another server also has a client in that rom and subscribes to listen. When a client in Room A sends a message, server 2 will be subscribed to messages in Room A. server 1 then checks its local map and transmits information, then redis then checks who is subscribed to room A and then finds server 2 is subscribed and gives server 2 the message, server 2 then checks the map for any of the users who are in the room and transmits the message. It does this for every server. 
+
+Ping/pong pattern is important for web sockets because clients may disconnect ocasionally leaving the web socket connection up, this is a zombie connection which has no indication of turning off. Regularly pinging the web socket connection from the server side will let the server know which connections are active and which are to be disposed of.
+
+Redis will not act as a cache, at least not yet, but primarily for pub/sub model where each server will store a dictionary of room_id websocket connections and each client will be given a dedicated web socket when logged in which will be added to the rooms.
+
+### Password Hashing
+
+is another thing I learned about recently. When passwords are stored in  adatabase we hash them so that we compare an incoming password to the hashed ones and if the database is compromised then the hash is not reversible to get the password. We additionally salt the password which the bycrypt library does for us which is add an extra plain text string to every password, each user will have their own unique plaintext string. This makes it harder for hackers who will use rainbow tables and other methods of brute-force attacking and finding passwords despite being hashed.

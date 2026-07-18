@@ -1,13 +1,11 @@
 
-
+const { hashPassword } = require('../helpers/UserAuthenticator')
 
 class UserService {
 
     _dbClient//I need a database client instance, what we can do is create an instance from the pool and pass it through
     constructor(connection) {
         this._dbClient = connection
-
-
     }
 
     async getUserAsync(id) {
@@ -54,9 +52,11 @@ class UserService {
     }
 
     async createUserAsync(body) {
-        const { email, username, passwordHash } = body
+        let { email, username, passwordHash } = body
         try {
             await this._dbClient.query('BEGIN')
+
+            passwordHash = await hashPassword(passwordHash)
             const values = [email, username, passwordHash]
             let result = await this._dbClient.query(`INSERT INTO USERS (email,username,passwordhash) VALUES($1,$2,$3)`, values)//perform query with prepared statement
             //result variable stores the result object, which contains a lot of database information we can limit down to just the objects
@@ -125,6 +125,10 @@ class UserService {
 
             this._dbClient.release()//releases the client/connection back into the connection pool to be used by others
         }
+
+    }
+
+    hashPassword(originalPassword) {
 
     }
 }
