@@ -12,6 +12,7 @@ const http = require('node:http');//importing http module from node
 const DbPool = require('./DbPool');
 const RedisConnection = require('./RedisConnector');
 const { registerAllRoutes } = require("./Router");
+const { createJWT, verifyJWT } = require('./helpers/UserAuthenticator')
 
 const { server } = require("./server");
 
@@ -32,7 +33,11 @@ async function main() {
     redis = new RedisConnection();
     redis.connectClient();
 
-    //testing hash
+    //testing jwt
+    const token = await createJWT(24);
+    const result = await verifyJWT("coolk");
+    console.log(result);
+
 
 
 

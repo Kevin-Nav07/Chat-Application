@@ -68,6 +68,7 @@ async function route(body, url, method) {
 
 
     console.log("URL:" + url)
+    let connection;
     try {
         const { pathName, search, searchParameters } = parseUrl(url);
         validateURLFormat(pathName, search)
@@ -85,7 +86,8 @@ async function route(body, url, method) {
 
 
                 console.log("Path params:" + match, "routing method: " + route.method, "routing handler: " + route.handler)
-                controller = new route.controller(await DbPool.provideClient())
+                connection = await DbPool.provideClient();
+                controller = new route.controller(connection);
                 return await controller.handleRequest(method, body, searchParameters, pathName, route.handler, pathParams, route.schema, route.expectedPathTypes, route.expectedSearchParamTypes);
             }
 
@@ -98,6 +100,12 @@ async function route(body, url, method) {
         //if(e instanceof ValidationError)
         console.log("problem parsing the api call url" + e);
         return { responseStatusCode: 500, responseBody: "Unexpected error occured on server side" };
+    }
+    finally {
+        if (connection !== undefined) {
+            connection.release();
+
+        }
     }
 
 

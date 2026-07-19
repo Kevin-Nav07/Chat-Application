@@ -22,9 +22,7 @@ class UserService {
             throw exception
 
         }
-        finally {
-            this._dbClient.release()//releases the client/connection back into the connection pool to be used by others
-        }
+
 
 
 

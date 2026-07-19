@@ -139,3 +139,55 @@ Redis will not act as a cache, at least not yet, but primarily for pub/sub model
 ### Password Hashing
 
 is another thing I learned about recently. When passwords are stored in  adatabase we hash them so that we compare an incoming password to the hashed ones and if the database is compromised then the hash is not reversible to get the password. We additionally salt the password which the bycrypt library does for us which is add an extra plain text string to every password, each user will have their own unique plaintext string. This makes it harder for hackers who will use rainbow tables and other methods of brute-force attacking and finding passwords despite being hashed.
+
+
+# July 18th
+
+## What I Plan
+    - Implement user authentication server-side
+    - figure out web socket client and room storage
+
+## What I Have Done
+- Learned about JWT, refresh tokens, access tokens
+- Implemented refresh and access tokens into the services
+
+I learned a lot today, a lot about security and JWT access tokens. Most of the day was spent reading and learning rather than implementing, I tried to analyze the tradeoffs between token-based authentication and session-based. The reality I found was that neither of these tehcniques are more secure than the other, but only sometimes more secure depending on the situation. These two have different use cases and when I build applications in the future that is what I should look out for. Right now my application will not necessarily suffer or benefit from the differences, so I opted to use JWT merely based off learning value for myself.
+## What I Learned
+'
+
+### Picking an Authentication Technique
+I learned about the different authentication techniques.
+Session based authentication stores session id's in Redis which we can retrieve and manually set expiry dates whenever we want, we send this to the user. Sessions can consume a lot of resources due to it being stored in Redis and needd frequent storage, but it allows the server to suspend any session whenever it wants and sessions do not tend to scale well since the system is highly stateful.
+
+JWTS allow for secure payloads in each request that is given to the user and the server does not store,merely verified. It is more secure because of the encryption techniques. However, since JWT is not stored the server cannot suspend a JWT token and force a user logout, it has to expire naturally.
+
+
+#### Session Pros
+    - session is used with cookies, making it easy to use
+    -   session cookies are have low space complexity
+    - Revoking a session is straightforward, just delete the entry
+    -if a session is compromised then it only compromises one user
+
+#### Session Cons
+    - couples both the front end back end
+    - harder to scale because cookies are stored in server-side, with many users this is hard to keep track of
+    - Storing sessions in cookies make cross-domain communication between client and Server more difficult, not impossibnle. Third-party apps trying to integrate with a session-based server will need their own way of dealing with the cookies
+    -cookies are more susceptible to Cross-Site Request Forgery (XSRF or CSRF)
+    - For distributed systems we need a centralized session storage where multiple servers would need access of this, this can create latency for the sheer size of session data and user base.
+    -Redis lookup every request because we need to validate the token each time.
+    -if the session store goes down then all login sessions are gone for the moment
+
+#### Token Pros
+    -No seperate storage needed
+    - easy to scale, any server can verify tokens independantly
+    - easy verification, no extra calls unless using refresh tokens
+    - works identically for browsers, mobile, other servers when it comes to cross-domain 
+
+
+#### Token Cons
+    - when a token is taken it is hard to get rid of, revocation of a token is difficult
+    - if a single secret is leaked, then attackers can forge every single token
+    -few hundred bytes when it comes t payloads
+
+I am going to use jwt tokens merely for learning purposes. Sessions would be easier to implemnt.
+
