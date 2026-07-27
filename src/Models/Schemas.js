@@ -89,4 +89,27 @@ const createRoomSchema = {
 }
 
 
-module.exports = { createUserSchema, updateUserSchema, createRoomSchema }
+//**********************Auth *****************************///
+
+const loginSchema = {
+    type: "object",
+    properties: {
+        user_id: {
+            type: "number"
+
+        },
+        password: {
+            allOf: [
+                { not: { type: "number" } },
+                { type: "string" }
+            ]
+
+        }
+
+
+
+    },
+    required: ["user_id", "password"],
+    additionalProperties: false
+}
+module.exports = { createUserSchema, updateUserSchema, createRoomSchema, loginSchema }

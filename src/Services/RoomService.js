@@ -39,7 +39,7 @@ class RoomService {
 
         }
         finally {
-            this.#_dbClient.release()//releases the client/connection back into the connection pool to be used by others
+            // this.#_dbClient.release()//releases the client/connection back into the connection pool to be used by others
         }
 
     }
@@ -74,7 +74,7 @@ ON rooms.id = room_members.room_id WHERE  room_members.user_id = $1`, [id]);
 
         }
         finally {
-            this.#_dbClient.release();
+            // this.#_dbClient.release();
         }
 
 
@@ -92,7 +92,7 @@ ON rooms.id = room_members.room_id WHERE  room_members.user_id = $1`, [id]);
             throw error
         }
         finally {
-            this.#_dbClient.release();
+            // this.#_dbClient.release();
         }
 
     }

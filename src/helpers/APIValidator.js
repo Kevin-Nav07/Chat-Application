@@ -180,7 +180,7 @@ function validateBodyFormat(schemaName, otherBody) {
 
     */
 
-    if (schemaName === null || schemaName === undefined) {//no schema defined
+    if (schemaName == null) {//no schema defined
         return true
     }
     else {//schema is defined

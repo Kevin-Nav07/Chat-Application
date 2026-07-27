@@ -77,7 +77,9 @@ class RoomController {
             }
 
         }
-        catch {
+        catch (error) {
+            console.log("Bad request", error)
+            return { responseStatusCode: 500, responseBody: "Request does not match a method in the user controller" }
 
         }
 

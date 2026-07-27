@@ -11,7 +11,7 @@ async function hashPassword(password) {
 }
 
 async function verifyPassword(password, hashedPassword) {
-    return await bcrypt.compare(password, hashedPassword);//comapres the incoming unhashed password by hashing it and 
+    return await bcrypt.compare(password, hashedPassword);//compares the incoming unhashed password by hashing it and 
     // extracting the salt to the stored db hashed and salted password
 
 
@@ -65,16 +65,38 @@ async function verifyJWT(token) {
 }
 
 async function generateRefreshToken() {
-    const randomBytesAsync = promisify(crypto.randomBytes);
-    return secureString = await randomBytesAsync(32).toString('hex');//this generates a random string serving as our refreshToken
+    const secureString2 = crypto.randomBytes(32).toString('hex')
+    const randomBytesAsync = util.promisify(crypto.randomBytes);
+    const secureString = await randomBytesAsync(32);//this generates a random string serving as our refreshToken
+    return secureString.toString('hex');
+}
+
+function hashRefreshToken(token) {//this method of hashing is less complicated than bycrpt, making it easier to crack but
+    //since refresh tokens are already long, hashing it is just extra security
+    const hash = crypto.createHash('sha256');//creates hashing object
+    hash.update(token);//creates the hash for the token
+    return hash.digest('base64');//returns the hashed token in base64 format
 
 }
 
-async function hashRefreshToken(token) {
-    const hash = crypto.createHash('sha256');
-    hash.update(token);
-    return hash.digest('base64');
+function setCookies(outgoingRequest, cookies) {//outgoingRequest is of type OutgoingRequest from node js http library
+    //cookies is an object containing all the cookies in key-value pairs
+    const cookiesArray = []
+    for (const [key, value] of Object.entries(cookies)) {
+        if (key != null && value != null) {
+
+            //this encoding prevents CRLF attacks
+            const safeKey = encodeURIComponent(key);
+            const safeValue = encodeURIComponent(value);
+            cookiesArray.push(`${safeKey}=${safeValue}; Secure; HttpOnly; SameSite=Strict; Path=/`);
+        }
+
+    }
+    if (cookiesArray.length > 0) {
+        outgoingRequest.setHeader("Set-Cookie", cookiesArray);
+    }/// this takes in a single header name, then for each entry of the
+    //cookiesArray it creates a seperate "Set-Cookie" header for every cookie
+
 
 }
-
-module.exports = { hashPassword, verifyPassword, createJWT, verifyJWT, generateRefreshToken, hashRefreshToken }
+module.exports = { hashPassword, verifyPassword, createJWT, verifyJWT, generateRefreshToken, hashRefreshToken, setCookies }

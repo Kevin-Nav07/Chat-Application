@@ -44,7 +44,7 @@ class UserService {
             throw error
         }
         finally {
-            this._dbClient.release()//releases the client/connection back into the connection pool to be used by others
+            // this._dbClient.release()//releases the client/connection back into the connection pool to be used by others
         }
 
     }
@@ -68,7 +68,7 @@ class UserService {
 
         }
         finally {
-            this._dbClient.release()//releases the client/connection back into the connection pool to be used by others
+            // this._dbClient.release()//releases the client/connection back into the connection pool to be used by others
         }
 
     }
@@ -93,7 +93,7 @@ class UserService {
         }
         finally {
 
-            this._dbClient.release()//releases the client/connection back into the connection pool to be used by others
+            // this._dbClient.release()//releases the client/connection back into the connection pool to be used by others
         }
 
     }
@@ -121,14 +121,12 @@ class UserService {
         }
         finally {
 
-            this._dbClient.release()//releases the client/connection back into the connection pool to be used by others
+            // this._dbClient.release()//releases the client/connection back into the connection pool to be used by others
         }
 
     }
 
-    hashPassword(originalPassword) {
 
-    }
 }
 
 module.exports = UserService

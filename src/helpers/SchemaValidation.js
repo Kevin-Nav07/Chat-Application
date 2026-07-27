@@ -1,11 +1,12 @@
 const Ajv = require("ajv")
 const ajv = new Ajv({ allErrors: true, coerceTypes: true })//schema validaiton library
 //coercetypes allows for type conversion for string to integer
-const { createUserSchema, updateUserSchema, createRoomSchema } = require("../Models/Schemas")//import our predefined schemas
+const { createUserSchema, updateUserSchema, createRoomSchema, loginSchema } = require("../Models/Schemas")//import our predefined schemas
 
 ajv.addSchema(createUserSchema, "createUserSchema");//add schema to the ajv registry/cache
 ajv.addSchema(updateUserSchema, "updateUserSchema");//add schema to the ajv registry/cache
 ajv.addSchema(createRoomSchema, "createRoomSchema");
+ajv.addSchema(loginSchema, "loginSchema");
 
 
 module.exports = { ajv }//exports for other modules

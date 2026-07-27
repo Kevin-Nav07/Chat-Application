@@ -33,10 +33,6 @@ async function main() {
     redis = new RedisConnection();
     redis.connectClient();
 
-    //testing jwt
-    const token = await createJWT(24);
-    const result = await verifyJWT("coolk");
-    console.log(result);
 
 
 

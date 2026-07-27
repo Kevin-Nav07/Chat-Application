@@ -1,5 +1,6 @@
 const UserController = require('../Controllers/UserController');
 const RoomController = require('../Controllers/RoomController');
+const AuthController = require('../Controllers/AuthController');
 
 
 const routeList = [{
@@ -64,7 +65,25 @@ const routeList = [{
     schema: null,
     expectedPathTypes: null,
     expectedSearchParamTypes: { id: "number" }
-}
+},
+{
+    method: "POST",
+    url: "/auth/login",
+    controller: AuthController,
+    handler: "login",
+    schema: "loginSchema",
+    expectedPathTypes: null,
+    expectedSearchParamTypes: null
+},
+    // {
+    //     method: "POST",
+    //     url: "/auth/refresh",
+    //     controller: AuthController,
+    //     handler: "refresh",
+    //     schema: null,
+    //     expectedPathTypes: null,
+    //     expectedSearchParamTypes: null
+    // }
 ]
 
 module.exports = routeList

@@ -102,9 +102,10 @@ async function route(body, url, method) {
         return { responseStatusCode: 500, responseBody: "Unexpected error occured on server side" };
     }
     finally {
-        if (connection !== undefined) {
-            connection.release();
+        if (connection != null) {
 
+            connection.release();
+            console.log("Connection released back into pool");
         }
     }
 

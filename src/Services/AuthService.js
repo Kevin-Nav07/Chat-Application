@@ -1,141 +1,155 @@
 const UserService = require('./UserService');
 const { verifyPassword, generateRefreshToken, hashRefreshToken, createJWT } = require('../helpers/UserAuthenticator');
+
+const REFRESH_TOKEN_LIFETIME_DAYS = 5;
+
 class AuthService {
 
     #_dbClient
-    constructor(connection) {//connection is an individual client form DbPool
+    constructor(connection) {//connection is an individual client from DbPool
         this.#_dbClient = connection
     }
 
     //loginMethod
-    async login(body)//expected body {id: 21, password: example123}
-    {
+    async login(id, password) {
         try {
-            const { id, password } = body
             const userService = new UserService(this.#_dbClient);
 
             //retrieve user
-            let user = await userService.getUserAsync(id);
-            if (user === null || user === undefined) {
+            const user = await userService.getUserAsync(id);
+            if (user == null) {
                 throw new Error("Requested User does not exist");
             }
-            else {//found a user
-                const { passwordhash } = user;//extract password
-                //compare passsword
-                if (verifyPassword(password, passwordhash)) {//correct password
-                    //create refresh token and access token
-                    const refreshToken = await this.createRefreshToken(id);//this creates it int he database and returns the unhashed token to give back
-                    const accessToken = await createJWT(id);
 
-                    return { refreshToken, accessToken }//refresh token is a random string we generated with crypto library, access token is created using JWT
-                }
-                else {
-                    throw new Error("Incorrect Password");
-                }
+            const { passwordhash } = user; //extract password
 
+            //compare password — must be awaited, verifyPassword is async
+            const passwordIsValid = await verifyPassword(password, passwordhash);
+            if (!passwordIsValid) {
+                throw new Error("Incorrect Password");
             }
-            /* first retrieve the user associated with the id, then hash the current password with the salt */
+
+            //correct password — create refresh token and access token
+            const accessToken = await createJWT(id);
+            const refreshToken = await this.#insertNewRefreshToken(id); //creates it in the database and returns the unhashed token
+
+            if (refreshToken == null || accessToken == null) {
+                throw new Error("Tokens not generated properly");
+            }
+
+            return { refreshToken, accessToken }; //refreshToken is a random string from crypto, accessToken is a JWT
         }
         catch (error) {
             throw error;
-
         }
     }
 
-
-    //createRefreshToken
-
-    async createRefreshToken(userid) {
-        //createRefreshToken happens when a user first logs in, in which they create both refresh and access token, or if they just need to create a new token after deleting a prior one
-        //the only information we need to create a refreshToken is the userId, we merely generate a new token for the user and store it in the db
+    //step 1: look up refresh token (and lock the row) and check for expiry
+    //step 2: if not found or expired -> throw
+    //step 3: if valid -> issue a new access token, delete the old refresh token, insert a new one, all atomically
+    //
+    // NOTE: every failure path below just throws — the single catch block handles ROLLBACK
+    // once, in one place, instead of repeating it before every throw.
+    async refresh(refreshToken) {
         try {
-            const token = await generateRefreshToken();
-            const hashedToken = hashRefreshToken(token);
-            const currentDate = new Date()
-            const expirationDate = new Date()
-            expirationDate.setDate(date.getDate() + 5);//5 day expiration date from current time
+            const hashedToken = hashRefreshToken(refreshToken);
+            const currentDate = new Date();
 
             await this.#_dbClient.query("BEGIN");
-            const values = [tokenHash, userid, expirationDate, currentDate];
-            await this.#_dbClient.query("INSERT INTO REFRESH_TOKENS (token,user_id,expiration,created_at) VALUES ($1,$2,$3,$4)", values);
+
+            // SELECT ... FOR UPDATE locks this row for the duration of the transaction,
+            // preventing two concurrent refresh calls with the same token from both succeeding
+            const result = await this.#_dbClient.query(
+                "SELECT * FROM refresh_tokens WHERE tokenhash = $1 FOR UPDATE",
+                [hashedToken]
+            );
+            const tokenObject = result.rows[0];
+
+            if (tokenObject == null) {
+                throw new Error("Refresh Token Not Found");
+            }
+
+            if (tokenObject.expiration < currentDate) {
+                // Expired. We could delete it here for immediate cleanup, but since the whole
+                // transaction rolls back on throw anyway, we just let it be — a future refresh
+                // attempt with this same token will hit this same branch, or a periodic cleanup
+                // job removes stale rows independently.
+                throw new Error("Refresh Token has expired");
+            }
+
+            // verification complete — issue a new access token and rotate the refresh token
+            const newAccessToken = await createJWT(tokenObject.user_id);
+
+            // rotation: delete the old token, insert a new one, within the same transaction
+            await this.#_dbClient.query("DELETE FROM refresh_tokens WHERE id = $1", [tokenObject.id]);
+            const newRefreshToken = await this.#insertNewRefreshToken(tokenObject.user_id);
+
+            if (newAccessToken == null || newRefreshToken == null) {
+                throw new Error("Error creating new tokens during refresh");
+            }
 
             await this.#_dbClient.query("COMMIT");
 
-            return token;
-
+            return { accessToken: newAccessToken, refreshToken: newRefreshToken };
         }
         catch (error) {
-            await this.#_dbClient.query("ROLLBACK");
-            throw error
-
+            await this.#_dbClient.query("ROLLBACK").catch(() => {
+                // swallow — if BEGIN itself never ran, or the connection is already broken,
+                // ROLLBACK failing here shouldn't mask the original error below
+            });
+            console.log("Error generating new access token for user: " + error);
+            throw error;
         }
-        finally {
-            // this.#_dbClient.release()
-        }
-
     }
 
-    //createAccessToken
-    //this method is used when the access token has expired and we need to create a new access token
-    async createNewAccessToken(refreshToken) {
+    // shared helper — generates, hashes, and inserts a new refresh token for a user.
+    // Used by both login() and refresh() to avoid duplicating this logic.
+    // NOTE: assumes created_at has a DEFAULT now() in the table, so it isn't passed here.
+    async #insertNewRefreshToken(userId) {
+        const token = await generateRefreshToken();
+        const hashedToken = hashRefreshToken(token);
+
+        if (token == null || hashedToken == null) {
+            throw new Error("Issue creating Refresh Token");
+        }
+
+        const expirationDate = new Date();
+        expirationDate.setDate(expirationDate.getDate() + REFRESH_TOKEN_LIFETIME_DAYS);
+
+        await this.#_dbClient.query(
+            "INSERT INTO refresh_tokens (tokenhash, user_id, expiration) VALUES ($1, $2, $3)",
+            [hashedToken, userId, expirationDate]
+        );
+
+        return token;
+    }
+
+    // Given a raw (unhashed) refresh token, hash it and look up the matching row.
+    // Kept as a standalone read for cases where you just need to inspect a token
+    // without performing a rotation.
+    async getRefreshToken(refreshToken) {
         try {
-            const currentDate = new Date()
             const hashedToken = hashRefreshToken(refreshToken);
-            const tokenObject = await this.getRefreshToken(hashedToken)
-            if (tokenObject !== null || tokenObject !== undefined) {//token found
-                //check for expiry 
-                if (tokenObject.expiration < currentDate) {//if the expiration date has passed
-                    throw new Error("Expiraiton Date passed");
-
-                }
-                else {//expiration date is in the future.
-                    //verification of RefreshToken is now complete, we proceed with creating the access token.
-
-                    const newToken = tokenObject?.user_id ? createJWT() : null
-                    if (newToken === null) {
-                        throw new Error("Error with creating new access token ");
-                    }
-
-
-
-                }
-
-            }
-
+            const result = await this.#_dbClient.query(
+                "SELECT * FROM refresh_tokens WHERE tokenhash = $1",
+                [hashedToken]
+            );
+            return result.rows[0] ?? null;
         }
         catch (error) {
-            console.log("error gneerating new access token for user");
+            console.log("Error occurred retrieving refresh token: " + error);
             throw error;
         }
-
-        //step 1:look up refresh token and check for expiry and return object
-        // if we cant find token then throw error
-        //step 2: if access token is found, then check for expiry date and if it is expired then throw another error
-        //step 3: if it is not expired and found, then verification is done, we now create the access token and return it to the client
     }
 
-
-    async getRefreshToken(hashedToken) {//given a current refreshToken, check the RefreshToken table for the hashed value and return the object
-        try {
-
-            await this.#_dbClient.query("BEGIN");
-
-            let results = await this.#_dbClient.query("SELECT * FROM REFRESH_TOKENS WHERE tokenHash = (?) ", [hashedToken]);
-            await this.#_dbClient.query("COMIT");
-            return results.rows[0]
-        }
-        catch (error) {
-            await this.#_dbClient.query("ROLLBACKK");
-            console.log("Error occured retrieveing refresh token");
-            throw error;
-        }
-
-
+    // Deletes a single refresh token outright (e.g. explicit logout on one device).
+    async deleteRefreshToken(refreshToken) {
+        const hashedToken = hashRefreshToken(refreshToken);
+        await this.#_dbClient.query(
+            "DELETE FROM refresh_tokens WHERE tokenhash = $1",
+            [hashedToken]
+        );
     }
-
-    //deletRefreshToken
-
-
 
 }
 

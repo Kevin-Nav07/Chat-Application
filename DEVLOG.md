@@ -191,3 +191,48 @@ JWTS allow for secure payloads in each request that is given to the user and the
 
 I am going to use jwt tokens merely for learning purposes. Sessions would be easier to implemnt.
 
+# July 26th
+
+## What I Plan
+    -Finish authentication endpoints and test them
+    -Look into and see how redis can be used in conjunction with authentication
+    -Look into Redis pub/sub and how to set it up 
+  
+
+
+## What I Did
+-Created Auth Controller and Fixed Auth Services
+- Installed mkcert to generate localhost certifications so I can use https locally for secure transmissions
+-Created login endpoint
+-implemented token rotation for refresh endpoint
+-figured out how to set cookies on http header when returning tokens for the login endpoint
+
+## What I Learned
+
+Since a few days have gone by I have been trying to refresh on what I did. So far here is my imagined workflow for a user logging in and sending/recieving messages to another user
+
+    1.User logs in, this log in hits the login endpoint which generates an access and refresh token, this refresh token is either put in Db or Redis cache
+    2.User sends the access token on every request, once the access token is expired, we hit the /refresh enbpoint to generate a new one. If the refresh token is expired, then we force the user to login again and repeat from step 1
+    3. once the user has a new access token they can continue to do things in the application. 
+    4. After loggin in we create a websocket connection with the server for each user, this web socket connection will provide new messages when they come from other users regardless if we are in the chat or not.
+    5. The server stores every user's websocket connection in a server map that stores all rooms, storing the pointer to each user's connection to the room they are in.
+    6. When a user sends a message in a room, they send the message with the room information(we need to figure out how to let the server know which room the message is for). Once the server recieves the message, it transmits it to redis, which then retransmits it to servers that subscribe to that room
+
+### API Security Maturity Model
+
+this article: https://curity.io/resources/learn/the-api-security-maturity-model/
+
+talks about the levels of API security, emphasizing the importance of user-centric and identity based authentication as more mature secure practices. Basic authentication in the form of API keys is at the bottom, followed by token-based authentication in level 2, 
+
+The problem with basic authentication is that keys can easily be compromised and there is no emphasis of user identity. This also only provides authentication and not authorization.
+
+### XSS and CSRF Attacks and Cookies and Http Authorization Header
+
+Something I stumbled upon was how to send and store tokens across to the client. There are two ways
+
+#### Cookies
+Cookies are small files with key-value pairs that you can define and send in the headers section. These cookies are sent to the client and stored in the browser cookie jar or cache and automaticaly appended with every request, there is not much work to do from the client end. The problem with cookies is that they are vulnerable to XSS attacks, which are attacks where a user can insert a malicous piece of javascript in a website, executing it which can then retrieve your browser cookies and leak sensitive information. We can minimize this by appending the HttpOnly attribute which keeps the cookies in http and does not store it in the browser. the "Secure" attribute also can be used to secure the cookies in transmission and is only usable in HTTPS.
+
+#### Authorization Header
+
+This is a secure header to store tokens or other credentials in the header, often for short-lived tokens. This does not have persistent storage so it is stored in some sort of local memory for the client, which is vulnerable to CSRF attack(cross site request forgery) where a malicous user will attempt to try to bait you into clicking a link or image to a website already have a session with, and this launches or executes some sort of call to the api given your login. With CSRF the malicous link will call an api request like transfering money or retrieving information 

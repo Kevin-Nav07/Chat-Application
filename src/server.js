@@ -4,11 +4,12 @@
 const { route } = require('./Router')
 const { parseJSON } = require("./helpers/Parsers")
 const http = require('node:http');//importing http module from node
-const { validateURLFormat } = require('./helpers/APIValidator');
-const { type } = require('node:os');
+const https = require('node:https');//importing https module for TLS encryption
+const fs = require('node:fs');//for file reading
 const WebSocket = require('ws');
 
-const { unpack, pack } = require('msgpackr')
+const { unpack, pack } = require('msgpackr');
+const { setCookies } = require('./helpers/UserAuthenticator');
 /*http server takes an optional Options object paramater and a RequestListener function
 of form: where request is the request object representative of an IncomingMEssage object, response is a ServerResponse object
 function(request,response):void {
@@ -22,9 +23,18 @@ requestlistener function paramater will be a callback paramater, we can call cal
 function (req:IncomingMessage,res:ServerResponse){}
 */
 
+const httpsOptions = {
+    key: fs.readFileSync('certs/localhost+2-key.pem'),
+    cert: fs.readFileSync('certs/localhost+2.pem'),
+    // Enable all security features
+    minVersion: 'TLSv1.2',
+    // Recommended security settings
+    secureOptions: require('constants').SSL_OP_NO_SSLv3 |
+        require('constants').SSL_OP_NO_TLSv1 |
+        require('constants').SSL_OP_NO_TLSv1_1
+};
 
-
-server = http.createServer(function (req, res) {
+server = https.createServer(httpsOptions, function (req, res) {
     let body = ""
     res.on('error', (error) => {
         console.log("Error encountered with the response", error);
@@ -52,17 +62,25 @@ server = http.createServer(function (req, res) {
 
             }
 
+            //parsing cookies
+            console.log(req.headers)
+
 
             const response = await route(body, url, method);
             let responseStatusCode = response.responseStatusCode;
             let responseBody = response.responseBody;
+            let responseCookies = response.responseCookies;
+
 
             res.statusCode = responseStatusCode
+            if (responseCookies != null) {
+                setCookies(res, responseCookies);
+            }
             const headers = new Map([['Content-Type', 'application/json'], ['test-Header', 'Kevo']])
 
             res.setHeaders(headers);//headers must be an instance of Map or Header class
 
-            if (typeof responseBody === 'objct' || Array.isArray(responseBody)) {
+            if (typeof responseBody === 'object' || Array.isArray(responseBody)) {
                 responseBody = JSON.stringify(responseBody);
 
             }
