@@ -60,6 +60,7 @@ async function verifyJWT(token) {
         else {
             console.log("unexpected jwt verification error", error)
         }
+        throw error
 
     }
 }

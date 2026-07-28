@@ -52,6 +52,9 @@ class AuthService {
     // once, in one place, instead of repeating it before every throw.
     async refresh(refreshToken) {
         try {
+            if (refreshToken == null) {
+                throw new Error("Invalid Token");
+            }
             const hashedToken = hashRefreshToken(refreshToken);
             const currentDate = new Date();
 
@@ -149,6 +152,23 @@ class AuthService {
             "DELETE FROM refresh_tokens WHERE tokenhash = $1",
             [hashedToken]
         );
+    }
+
+    //logout
+    /* When a user clicks logout, what happens? their session is done and so
+    1. Their refresh token must be deleted
+    2. Their access token must be invalidated somehow(figure out)*/
+
+    async logout(refreshToken) {
+        try {
+            this.deleteRefreshToken(refreshToken);
+        }
+        catch (error) {
+            console.log("issue logging out", error);
+            throw error;
+        }
+
+
     }
 
 }

@@ -236,3 +236,30 @@ Cookies are small files with key-value pairs that you can define and send in the
 #### Authorization Header
 
 This is a secure header to store tokens or other credentials in the header, often for short-lived tokens. This does not have persistent storage so it is stored in some sort of local memory for the client, which is vulnerable to CSRF attack(cross site request forgery) where a malicous user will attempt to try to bait you into clicking a link or image to a website already have a session with, and this launches or executes some sort of call to the api given your login. With CSRF the malicous link will call an api request like transfering money or retrieving information 
+
+
+# July 27th
+
+## What I Plan
+- Finish refresh endpoint
+- do logout endpoint
+- look into pub/sub implementation on redis 
+
+## What I Did
+-created refresh endpoint
+-added cookie serializing and deserializing;
+-added accessToken verification in the Router middleware
+-logout endpoint
+- seperated WebSocketServer from normal server
+- started WebSocketServerManager
+
+I decided to have a joint map of user_id to ws connection and room_id to websocket connections in the form of a Websocket Connection Manager. This does not take up much space even with 100k users given that it is just storing ws pointers. I may remove the user_id map if it is not good, but I am choosing to use this approach over just user_id map because it prevents a crucial thing, repeated db/redis look ups to see who is in a room. Even with redis cache which will make it more efficient I am trading off my usage credits for nearly every message as each message will check who is in the room the message is intended for. This method prevents that as now transmitting a message to a room just means iterating through the list of ws connections for that room and sending it, and then saving the message to the db. I will consider saving messages in batches if that is more efficient.Messages on websocket are also sent as objects with a message attribute and room attribute which contains the room_id
+
+Also when it comes to websocket, we are using websocket secure which encrypts our data using TSL, but we will send messages back and forth as binary data, as it is much mor efficient to send
+## What I learned
+
+we should not be passing query paramaters for a specific endpoint that can compromise data or give it to another user. It is better to use the user_id embeded in a given access token rather than pass in query paramaters. I will have to swap out the endpoints that have these query paramaters or resource to 
+
+**The URL dictates what the user wants to see. The JWT dictates who the user is.**
+
+This is important because if we want to use query paramaters or a path paramater, it is waht the user would like to see, then the jwt is what stores who the user is and the server decides if the user is allowed to see it. I will look into this more when I get into authorization.

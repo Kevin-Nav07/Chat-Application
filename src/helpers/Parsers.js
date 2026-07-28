@@ -20,12 +20,31 @@ function parseUrl(url, url_host) {
 
 }
 
-function parseUrlToPathParamaters(pathName, routeObject) {//takes in the routeObject, and the current url PathName
-    //returns an object with the pathParamater name as the key and the value fo the parametr as the value
+function parseCookies(request) {
+    const cookieHeader = request.headers.cookie;
+    if (!cookieHeader) return {};
 
+    const cookies = {};
 
+    // Split the string by the semicolon and space
+    cookieHeader.split('; ').forEach(cookieStr => {
+        // Split each pair by the first '=' 
+        // (Using split and shift handles edge cases where the value itself contains an '=')
+        const parts = cookieStr.split('=');
+        const key = parts.shift().trim();
+        const value = parts.join('=');
 
+        if (key) {
+            try {
+                cookies[key] = decodeURIComponent(value);
+            } catch (e) {
+                // If decoding fails, fall back to the raw value
+                cookies[key] = value;
+            }
+        }
+    });
 
+    return cookies;
 }
 
 
@@ -37,4 +56,4 @@ function parseUrlToPathParamaters(pathName, routeObject) {//takes in the routeOb
 
 
 
-module.exports = { parseJSON, parseUrl }
+module.exports = { parseJSON, parseUrl, parseCookies }

@@ -3,9 +3,10 @@
 //****************Register all controllers here ************/
 UserController = require('./Controllers/UserController');
 RoomController = require('./Controllers/RoomController');
-
+const jwt = require('jsonwebtoken')
 
 const { validateURLFormat, checkValidMethod, validatePathParamTypes } = require('./helpers/APIValidator');
+const { verifyJWT } = require('./helpers/UserAuthenticator');
 const { parseUrl } = require('./helpers/Parsers')
 const DbPool = require('./DbPool');
 const routeList = require('./Models/Routes');
@@ -64,7 +65,7 @@ function registerAllRoutes() {
 }
 
 
-async function route(body, url, method) {
+async function route(body, url, method, cookies) {
 
 
     console.log("URL:" + url)
@@ -83,12 +84,22 @@ async function route(body, url, method) {
                 //we will let the actual specific controller do query paramater and body validation
                 pathParams = match.groups;//extraction of pathParamaters using our regex pattern
 
+                //check if we need an access token for this match
+                let refreshToken = cookies?.refreshToken;
+                if (route?.tokenNeeded != null && route.tokenNeeded) {
+                    //verify the access token
+
+                    const { accessToken } = cookies;
+                    await verifyJWT(accessToken);
+
+                }
+
 
 
                 console.log("Path params:" + match, "routing method: " + route.method, "routing handler: " + route.handler)
                 connection = await DbPool.provideClient();
                 controller = new route.controller(connection);
-                return await controller.handleRequest(method, body, searchParameters, pathName, route.handler, pathParams, route.schema, route.expectedPathTypes, route.expectedSearchParamTypes);
+                return await controller.handleRequest(method, body, searchParameters, pathName, route.handler, pathParams, route.schema, route.expectedPathTypes, route.expectedSearchParamTypes, refreshToken);
             }
 
         }
@@ -96,9 +107,17 @@ async function route(body, url, method) {
         console.log("Could not find API endpoint", url, method);
         return { responseStatusCode: 400, responseBody: "URL does not match registered routes" }
     }
-    catch (e) {
+    catch (error) {
         //if(e instanceof ValidationError)
-        console.log("problem parsing the api call url" + e);
+        if (error instanceof jwt.JsonWebTokenError) {
+            console.log("either malformed or incorrect token");
+            return { responseStatusCode: 401, responseBody: "Incorrect or Malformed Token" }
+        }
+        else if (error instanceof TokenExpiredError) {
+            console.log("JWT token expired");
+            return { responseStatusCode: 401, responseBody: "Token Expired" };
+        }
+        console.log("problem parsing the api call url" + error);
         return { responseStatusCode: 500, responseBody: "Unexpected error occured on server side" };
     }
     finally {

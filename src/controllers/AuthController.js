@@ -15,7 +15,7 @@ class AuthController {
     async login(body)//expected body {id: 21, password: example123}
     //try loggin in, if any error occurs throw a 500, but we can also have a custom error later down the line to simulate failed Logins
     {
-
+        console.log("INSIDE LOGIN")
         try {
             const { password, user_id } = body;
             if (password == null || user_id == null) {
@@ -41,8 +41,12 @@ class AuthController {
     //this method creates a new Access token by validating an incoming unhashed refreshToken and then creating a new access token and rotating the refresh token
     //POST
     async refresh(refreshToken) {
+        console.log("INSIDE REFRESH")
         try {
             const tokens = await this.#_service.refresh(refreshToken);
+            console.log("After refresh:", tokens);
+            return { responseStatusCode: 200, responseBody: "Tokens generated", responseCookies: tokens };
+
 
         }
         catch (error) {
@@ -53,8 +57,21 @@ class AuthController {
 
 
     }
-    //Refresh(generate new access token)
-    async handleRequest(method, body, searchParams, pathName, handler, pathParams, schema, expectedPathTypes, expectedSearchParamType) {
+
+
+    async logout(refreshToken) {
+        try {
+            await this.#_service.logout(refreshToken);
+            return { responseStatusCode: 200, responseBody: "Successfuly logged out" };
+        }
+        catch (error) {
+            console.log("Unexpected error during logout");
+            return { responseStatusCode: 500, responseBody: "Failed logout" };
+        }
+    }
+
+
+    async handleRequest(method, body, searchParams, pathName, handler, pathParams, schema, expectedPathTypes, expectedSearchParamType, refreshToken) {
         /*
        In POST: always pass in body
        IN GET: always pass in optional pathParams, searchParams
@@ -80,8 +97,15 @@ class AuthController {
         try {
             switch (method) {
                 case "POST":
-                    return this[handler](body);
+                    if (handler === "login") {
+                        return this[handler](body);
+                    }
+                    else if (handler == "refresh") {
+                        return this[handler](refreshToken);
 
+                    }
+                case "DELETE":
+                    return this[handler](refreshToken);
 
             }
 

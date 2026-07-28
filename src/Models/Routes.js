@@ -10,7 +10,8 @@ const routeList = [{
     handler: "getUserAsync",
     schema: null,
     expectedPathTypes: { id: "number" },
-    expectedSearchParamTypes: { filter: "string" }
+    expectedSearchParamTypes: { filter: "string" },
+    tokenNeeded: true
 },
 {
     method: "GET",
@@ -19,7 +20,7 @@ const routeList = [{
     handler: "getUsersAsync",
     schema: null,
     expectedPathTypes: null,
-
+    tokenNeeded: true
 },
 {
     method: "PUT",
@@ -28,7 +29,8 @@ const routeList = [{
     handler: "updateUserAsync",
     schema: "updateUserSchema",
     expectedPathTypes: { id: "number" },
-    expectedSearchParamTypes: null
+    expectedSearchParamTypes: null,
+    tokenNeeded: true
 },
 {
     method: "POST",
@@ -37,7 +39,8 @@ const routeList = [{
     handler: "createUserAsync",
     schema: "createUserSchema",
     expectedPathTypes: null,
-    expectedSearchParamTypes: null
+    expectedSearchParamTypes: null,
+    tokenNeeded: false
 },
 {
     method: "DELETE",
@@ -46,7 +49,8 @@ const routeList = [{
     handler: "deleteUserAsync",
     schema: null,
     expectedPathTypes: { id: "number" },
-    expectedSearchParamTypes: null
+    expectedSearchParamTypes: null,
+    tokenNeeded: true
 },
 {
     method: "POST",
@@ -55,7 +59,8 @@ const routeList = [{
     handler: "createRoomAsync",
     schema: 'createRoomSchema',
     expectedPathTypes: null,
-    expectedSearchParamTypes: null
+    expectedSearchParamTypes: null,
+    tokenNeeded: true
 },
 {
     method: "GET",
@@ -64,7 +69,8 @@ const routeList = [{
     handler: "getRoomsAsync",
     schema: null,
     expectedPathTypes: null,
-    expectedSearchParamTypes: { id: "number" }
+    expectedSearchParamTypes: { id: "number" },
+    tokenNeeded: true
 },
 {
     method: "POST",
@@ -73,17 +79,29 @@ const routeList = [{
     handler: "login",
     schema: "loginSchema",
     expectedPathTypes: null,
-    expectedSearchParamTypes: null
+    expectedSearchParamTypes: null,
+    tokenNeeded: false
 },
-    // {
-    //     method: "POST",
-    //     url: "/auth/refresh",
-    //     controller: AuthController,
-    //     handler: "refresh",
-    //     schema: null,
-    //     expectedPathTypes: null,
-    //     expectedSearchParamTypes: null
-    // }
+{
+    method: "POST",
+    url: "/auth/refresh",
+    controller: AuthController,
+    handler: "refresh",
+    schema: null,
+    expectedPathTypes: null,
+    expectedSearchParamTypes: null,
+    tokenNeeded: false
+},
+{
+    method: "DELETE",
+    url: "/auth/logout",
+    controller: AuthController,
+    handler: "logout",
+    schema: null,
+    expectedPathTypes: null,
+    expectedSearchParamTypes: null,
+    tokenNeeded: false
+}
 ]
 
 module.exports = routeList

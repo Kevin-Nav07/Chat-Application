@@ -15,6 +15,7 @@ const { registerAllRoutes } = require("./Router");
 const { createJWT, verifyJWT } = require('./helpers/UserAuthenticator')
 
 const { server } = require("./server");
+const createWebsocketServer = require("./WebsocketServer")
 
 const Ajv = require("ajv")
 const ajv = new Ajv({ coerceTypes: true })//schema validaiton library
@@ -22,11 +23,13 @@ const ajv = new Ajv({ coerceTypes: true })//schema validaiton library
 const { createsUserSchema } = require('./Models/Schemas')
 
 
+
 async function main() {
     //each pool will use environment variables for connection info
     DbPool.createPool();
     registerAllRoutes();
     server.listen(process.env.PORT, process.env.HOST);//make server start listening for connections
+    createWebsocketServer(server)
     console.log("Server is actively listening for connections");
 
     //redis connection setup
