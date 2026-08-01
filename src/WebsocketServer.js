@@ -1,15 +1,89 @@
 const { WebSocketServer } = require('ws');
-
+const WebsocketManager = require('./WebsocketManager')
 const { unpack, pack } = require('msgpackr');
+const { verifyJWT } = require('./helpers/UserAuthenticator');
+const { parseCookies } = require('./helpers/Parsers');
+const APIResponseObj = require('./Models/APIResponseObj');
 
 
 //wss
 function createWebSocketServer(server) {
 
-    const wss = new WebSocketServer({ server: server });//wss is the websocket server that listens for incomign websocket connections
+
+    //we use no server mode to handle the 'upgrade' event manually from our server file
+    const wss = new WebSocketServer({ noServer: true });//wss is the websocket server that listens for incomign websocket connections
+    const connectionManager = new WebsocketManager();
+
+    server.on('upgrade', async function upgrade(request, socket, head) {//triggered right before the websocket connection
+        //is completed on an upgrade request for http
+        //verify JWT and extract user_id
+        try {
+            //parsing cookies
+            const cookies = parseCookies(request);
+            const result = await verifyJWT()//result can either be the JWT payload or a APIResponseObj
+            if (result == null) {
+                throw new Error("Failed to get validation object");
+            }
+            else if (result instanceof APIResponseObj) {
+                if (socket.writable) {
+                    socket.write(
+                        `HTTP/1.1 ${result.responseStatusCode} ${result.responseTitle}\r\n` +
+                        'Content-Type: text/plain\r\n' +
+                        'Connection: close\r\n' +
+                        `Content-Length: ${Buffer.byteLength(result.responseMessage)}\r\n` +
+                        '\r\n' +
+                        result.responseMessage
+                    );
+                    // Always physically sever the TCP connection to prevent memory leaks
+                    socket.destroy();
+                }
+            }
+            else {//result is indeed the jwt object
+                const user_id = result?.user_id;//grab the user_id
+                if (user_id == null || !Number.isFinite(user_id)) {
+                    throw new Error("No id associated with token");
+                }
+                //verification complete, now upgrade the request
+                //handleUpgrade is what we call for a websocket server to handle an http update
+                //this function does all the heavy lifting for us. we just need to pas in the request, the raw TCP socket, the upgradeHead
+                //it takes a callback at the very end which only gets called when the request has been updated to a ws connection, and then ws connection
+                wss.handleUpgrade(request, socket, head, function done(ws) {
+                    //label the id here
+                    ws.user_id = user_id;
+                    //server emits connection event with the ws connection we just got from the upgrade
+                    wss.emit("connection", ws);
+                })
+
+            }
+        }
+        catch (error) {
+            //Log the actual error for your own debugging
+            console.error('[WebSocket Upgrade Error]:', error);
+            let responseMessage = "unexpected error with upgrade request";
+            let responseStatusCode = 500
+            let responseTitle = "Internal Server Error";
+            // Only attempt to send a response if client hasnt been disconnected
+            if (socket.writable) {
+                socket.write(
+                    `HTTP/1.1 ${responseStatusCode} ${responseTitle}\r\n` +
+                    'Content-Type: text/plain\r\n' +
+                    'Connection: close\r\n' +
+                    `Content-Length: ${Buffer.byteLength(responseMessage)}\r\n` +
+                    '\r\n' +
+                    responseMessage
+                );
+                // Always physically sever the TCP connection to prevent memory leaks
+                socket.destroy();
+            }
+        }
+    });
+
+
 
     wss.on('connection', (ws) => {//for every connection there is a ws(websocket) object for that connection
         console.log("Connected");
+        //get rooms assocaited with the user
+        // connectionManager.addConnectionToRoom();//adds the co
 
         //primary events: message,close,error
         ws.on('message', (data, isBinary) => {
@@ -17,25 +91,17 @@ function createWebSocketServer(server) {
             let message, room;
             if (!isBinary) {
                 message = data.toString("utf-8");//can convert a Buffer to a string like this
-
-
             }
             else {
                 data = unpack(data);
                 ({ room, message } = data);
-
             }
             console.log(`Binary was: ${isBinary} and data is ${data} ${typeof datae}`);
-
-
             //ws.id is how you give connections unique id's
             wss.clients.forEach((ws2) => {
                 if (ws2 !== ws) {
-
                     ws2.send(message);
                 }
-
-
             })
             console.log("New Message: ", message);
             // if (message.toLowerCase().trim() === 'close') {
@@ -46,7 +112,6 @@ function createWebSocketServer(server) {
         ws.on('close', () => {
             console.log("Conneciton closed by client");
         })
-
 
         //websocket is deemed as alive
         ws.isAlive = true;

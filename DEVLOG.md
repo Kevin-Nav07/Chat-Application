@@ -263,3 +263,43 @@ we should not be passing query paramaters for a specific endpoint that can compr
 **The URL dictates what the user wants to see. The JWT dictates who the user is.**
 
 This is important because if we want to use query paramaters or a path paramater, it is waht the user would like to see, then the jwt is what stores who the user is and the server decides if the user is allowed to see it. I will look into this more when I get into authorization.
+
+# July 31th
+
+## What I Have Planned
+- implement connection Manager at a basic level
+- Get user_id based off user authentication JWT token. So during websocket connection handshake we must check the  JWT sent to first verify it is valid, if nto send unauthorized. If it is valid, then check the user_id and label the ws connection. 
+- get users connecting and talking between rooms on postman
+- look into pub/sub on redis
+## What I Did
+
+    - implement connection manager methods for adding to a room map, removing from room map, transmitting
+    -looked into how to do secure messaging, using JWT to store user_id and then every message sends room_id which will be verified
+    properly to see if a user belongs to that room to send messaages. If a malicous user attempts to change the room_id to a room the user is in but still the user does not want to send the message, we  have to look into E2EE which will come in later.
+    -Implemented the upgrade handling methods for ws for JWT verification and user_id extraction.
+### Authentication Data
+When a user logs in and are given a token, the token contains necessary information like their user_id. This allows a token to stay rigid and if it is tampered, then we cannot pretend to be another user. After authenticating we store the user_id in the user_map as well as the ws connection object associated -- we essentially label the ws connection object.
+
+### Retrieving Rooms for Server and Client
+we need to retrieve rooms for the server to populate the rooms_map on a user login or websocket reconnect, and we need the client to retrieve rooms on login so they can display to the user the rooms that are immedietely clickable.
+It would be wrong for the server to wait for the client to do the get Rooms for User request, so on the connection of the ws we can delegate to a central worker in the server that will call service methods to retrieve the rooms and return them for us to send through the initial ws message. The issue is ws will have a hard time sending the rooms if they are so many so we have to only send the first 50ish rooms, through cursor-based pagination. I need to look into this pagination as well as the internal service delegator to see what to do.
+
+#### Message Data
+
+This is where it gets tricky, since room_id needs to be transmited, and the rooms a user belongs to can change quickly, we cannot put the room_id in the claims of a JWT access token as it would be stale once a user's rooms are updated. We can implement server-side validation of a user being in a room, so if the user sends a message in room 2, the server verifies they are actually in the room before sending the message. This restricts a user to only send messages to their rooms, and we should also include CSP header to restrict external javascript attacks. However, on the chance a malicous user can still alter a message payload and change the room id to a diferent room, leading the client to send a message to a room they did not want to, we can look into something called E2EE(End-to-End Encryption). We will implement E2EE later, so for now we proceed with sending room_id in the payload for every message.
+## What I Learned
+
+When a user first logs in, after they recieve their tokens and on the initial web socket handshake, they will be added to the server's list of web socket connections by first adding the user's ws connection to the user_map and then, at the same time the server should request for the rooms the user belongs too. Once those rooms are ascertained, we should opt to add each room to the rooms_map. When a message is sent from one user, they send the message on their websocket connection to the server, where the server sends it to each ws connection in the set of connections belonging to a room. This means the server needs a way to identify the user who sent the message, the room the message is for, and the message contents. When a ws connection is terminated, either forcefully or securely, then we remove that user's connection reference from the user map, and then remove it from any rooms the user belongs too. 
+
+### User map holds room_ids, Room map holds websocket connection
+
+In this scenerio the user map holds a list of room_ids that get populated on a user login, and during events like being removed from a room, getting added to a room, logoff and inactivity. The room_map will hold a list of websocket pointers for the users in the room, this list is populated based off who is logged in. If a user is logged in, they will have their ws connection added to each room they are in. This is made easy through the user map which tells us which rooms a user is part of. This room_map will dynamically recieve updates based off which user is logged in, logs out, whether a user adds another user who is currently online to the room, or removes.
+
+### How a Websocket Connection Sends Normal Data and Authentication Data
+
+Each websocket connection must authenticate, and when a message comes through we must know, either beforehand or through the message, what user_id is sending it, and what room the message is for, and the content of the message
+
+
+#### E2EE(End-to-End Encryption)
+
+this is a method where each client generates 3 keys, private,public and session key. Private key is used to decrypt messages, public key is stored publically for other users to download, it is how you encrypt messages for another user. We use the public and private key to generate a session key with another user and send data as fully encrypted through the clients and into the server.This prevents the server from reading. We wills still send room_id as plaintext. If a user is not authorized to send messages to a room then it won't send. If the room_id tampered with is in the allowed set of rooms to broadcast to, then the message gets sent to the client but decryption fails. This is something very importanbt to implement, but should be done when making the front-end. When doing this method we need to keep in mind the case where a message is sent to a room that the user is in, but the decryption fails for the recieving end because the message was not intended to be sent to that user(as in a malicous user redirected which room to go to). In this case, the server stores the message in the db, and so it is up to the client to deal with these unencrypted messages as garbage or display an empty bubble. We will decide how to solve this problem later so as not to bloat a db with failed messages.

@@ -3,6 +3,7 @@ const SALT_ROUNDS = 12;
 const jwt = require('jsonwebtoken')
 const util = require('util')
 const crypto = require('crypto');
+const APIResponseObj = require('../Models/APIResponseObj');
 
 
 async function hashPassword(password) {
@@ -32,7 +33,7 @@ async function createJWT(userId) {// by default every token will have a time of 
         let asyncSign = util.promisify(jwt.sign)
         const expirationTime = expirationDate.setMinutes(expirationDate.getMinutes() + 60);///set expiration as 1 hour ahead of current date
         const payload = {
-            user: userId,
+            user_id: userId,
 
         }
         value = await asyncSign(payload, sec, { expiresIn: '1h' });//creates and signs a token with given payload, expiration time and secret
@@ -64,6 +65,38 @@ async function verifyJWT(token) {
 
     }
 }
+
+async function verifyJWT2(cookies) {//takes in a cookies object, parses the cookies, verifies the token,extracts object or user_id
+    //then proceeds to check
+    let verify = util.promisify(jwt.verify);
+    const { accessToken } = cookies?.accessToken;//extract token from cookies
+    if (token == null) {//if no token found return status code
+        return new APIResponseObj(401, "token not found", "Unauthorized")
+    }
+    //token is found, now verification process
+    try {
+        //verify then return verified object
+        const result = await verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] })//this will throw if false
+        return result;//decoded payloald object when creating the token
+    }
+    catch (error) {
+
+        if (error instanceof jwt.JsonWebTokenError) {
+            return APIResponseObj(401, "Incorrect or Malformed Token", "Unauthorized");
+        }
+        else if (error instanceof TokenExpiredError) {
+
+            return APIResponseObj(401, "Expired Token", "Unauthorized");
+        }
+        else {
+
+            return APIResponseObj(500, "Unexpected error with token verification", "Internal Server Error")
+        }
+
+    }
+
+}
+
 
 async function generateRefreshToken() {
     const secureString2 = crypto.randomBytes(32).toString('hex')

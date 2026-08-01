@@ -90,7 +90,7 @@ async function route(body, url, method, cookies) {
                     //verify the access token
 
                     const { accessToken } = cookies;
-                    await verifyJWT(accessToken);
+                    tokenObj = await verifyJWT(accessToken);
 
                 }
 

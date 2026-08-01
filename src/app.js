@@ -33,8 +33,8 @@ async function main() {
     console.log("Server is actively listening for connections");
 
     //redis connection setup
-    redis = new RedisConnection();
-    redis.connectClient();
+    // redis = new RedisConnection();
+    // redis.connectClient();
 
 
 

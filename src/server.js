@@ -125,6 +125,9 @@ server.on("connection", () => {
     console.log("Someone connected!!!")
 })
 
+
+
+
 server.on('error', (error) => {
     console.log("error")
     if (error.code === 'EADDRINUSE') {
@@ -136,6 +139,7 @@ server.on('error', (error) => {
     }
     process.exit(1);
 });
+
 
 
 //**************WEB SOCKET SERVEr ****************/
