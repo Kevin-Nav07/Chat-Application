@@ -1,8 +1,8 @@
 class APIResponseObj {
 
 
-    constructor(responseStatusCode, responseMessage, responseTitle = null) {
-        this.responseMessage = responseMessage;
+    constructor(responseStatusCode, responseBody, responseTitle = null) {
+        this.responseBody = responseBody;
         this.responseStatusCode = responseStatusCode;
         this.responseTitle = responseTitle
 

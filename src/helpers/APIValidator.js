@@ -114,11 +114,11 @@ function validateSearchParamTypes(expectedSearchParamTypes, actualSearchParams) 
 
 
     searchParamObject = Object.fromEntries(actualSearchParams);
-    if (actualSearchParams === null || actualSearchParams === undefined) {//if the actual params are not specified
+    if (actualSearchParams == null) {//if the actual params are not specified
         return searchParamObject
     }
     else {//if the paramaters are specified
-        if (expectedSearchParamTypes === null)//if the expected params are none
+        if (expectedSearchParamTypes == null)//if the expected params are none
         {
             return searchParamObject
         }

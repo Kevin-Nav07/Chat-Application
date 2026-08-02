@@ -4,10 +4,10 @@ const { unpack, pack } = require('msgpackr');
 const { verifyJWT } = require('./helpers/UserAuthenticator');
 const { parseCookies } = require('./helpers/Parsers');
 const APIResponseObj = require('./Models/APIResponseObj');
-
+const ServiceContext = require('./ServiceContext');
 
 //wss
-function createWebSocketServer(server) {
+function createWebSocketServer(server, DbPool) {
 
 
     //we use no server mode to handle the 'upgrade' event manually from our server file
@@ -30,9 +30,9 @@ function createWebSocketServer(server) {
                         `HTTP/1.1 ${result.responseStatusCode} ${result.responseTitle}\r\n` +
                         'Content-Type: text/plain\r\n' +
                         'Connection: close\r\n' +
-                        `Content-Length: ${Buffer.byteLength(result.responseMessage)}\r\n` +
+                        `Content-Length: ${Buffer.byteLength(result.responseBody)}\r\n` +
                         '\r\n' +
-                        result.responseMessage
+                        result.responseBody
                     );
                     // Always physically sever the TCP connection to prevent memory leaks
                     socket.destroy();
@@ -59,7 +59,7 @@ function createWebSocketServer(server) {
         catch (error) {
             //Log the actual error for your own debugging
             console.error('[WebSocket Upgrade Error]:', error);
-            let responseMessage = "unexpected error with upgrade request";
+            let responseBody = "unexpected error with upgrade request";
             let responseStatusCode = 500
             let responseTitle = "Internal Server Error";
             // Only attempt to send a response if client hasnt been disconnected
@@ -68,9 +68,9 @@ function createWebSocketServer(server) {
                     `HTTP/1.1 ${responseStatusCode} ${responseTitle}\r\n` +
                     'Content-Type: text/plain\r\n' +
                     'Connection: close\r\n' +
-                    `Content-Length: ${Buffer.byteLength(responseMessage)}\r\n` +
+                    `Content-Length: ${Buffer.byteLength(responseBody)}\r\n` +
                     '\r\n' +
-                    responseMessage
+                    responseBody
                 );
                 // Always physically sever the TCP connection to prevent memory leaks
                 socket.destroy();
@@ -80,9 +80,18 @@ function createWebSocketServer(server) {
 
 
 
-    wss.on('connection', (ws) => {//for every connection there is a ws(websocket) object for that connection
+    wss.on('connection', async (ws) => {//for every connection there is a ws(websocket) object for that connection
         console.log("Connected");
-        //get rooms assocaited with the user
+        //get rooms associated with the user
+        //use the service context to create a room service for us
+        const serviceContext = await ServiceContext.create(DbPool);
+        const roomService = serviceContext.createRoomService();
+
+        //use the roomService to retrieve the rooms we need on connection
+        const rooms = await serviceContext.callServiceMethod(roomService, async (service) => {
+            return await service.getRoomsByUserAsync();
+        })
+
         // connectionManager.addConnectionToRoom();//adds the co
 
         //primary events: message,close,error

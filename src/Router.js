@@ -10,6 +10,7 @@ const { verifyJWT } = require('./helpers/UserAuthenticator');
 const { parseUrl } = require('./helpers/Parsers')
 const DbPool = require('./DbPool');
 const routeList = require('./Models/Routes');
+const APIResponseObj = require('./Models/APIResponseObj');
 
 
 
@@ -82,24 +83,35 @@ async function route(body, url, method, cookies) {
 
             if (route.method === method && match) {//this checks if the url method and the url path match any of our routes
                 //we will let the actual specific controller do query paramater and body validation
-                pathParams = match.groups;//extraction of pathParamaters using our regex pattern
+                const pathParams = match.groups;//extraction of pathParamaters using our regex pattern
 
                 //check if we need an access token for this match
                 let refreshToken = cookies?.refreshToken;
+                let user_id;
                 if (route?.tokenNeeded != null && route.tokenNeeded) {
                     //verify the access token
 
-                    const { accessToken } = cookies;
-                    tokenObj = await verifyJWT(accessToken);
+
+                    const result = await verifyJWT(cookies);
+                    //determine what the result is
+                    if (result instanceof APIResponseObj) {
+                        return result
+                    }
+                    //extract user_id
+                    user_id = result?.user_id;
+                    if (user_id == null || !Number.isFinite(user_id)) {
+                        throw new Error("No id attached to access token")
+                    }
+
 
                 }
 
 
 
                 console.log("Path params:" + match, "routing method: " + route.method, "routing handler: " + route.handler)
-                connection = await DbPool.provideClient();
-                controller = new route.controller(connection);
-                return await controller.handleRequest(method, body, searchParameters, pathName, route.handler, pathParams, route.schema, route.expectedPathTypes, route.expectedSearchParamTypes, refreshToken);
+                const connection = await DbPool.provideClient();
+                const controller = new route.controller(connection);
+                return await controller.handleRequest(method, body, searchParameters, pathName, route.handler, pathParams, route.schema, route.expectedPathTypes, route.expectedSearchParamTypes, refreshToken, user_id);
             }
 
         }
@@ -109,15 +121,8 @@ async function route(body, url, method, cookies) {
     }
     catch (error) {
         //if(e instanceof ValidationError)
-        if (error instanceof jwt.JsonWebTokenError) {
-            console.log("either malformed or incorrect token");
-            return { responseStatusCode: 401, responseBody: "Incorrect or Malformed Token" }
-        }
-        else if (error instanceof TokenExpiredError) {
-            console.log("JWT token expired");
-            return { responseStatusCode: 401, responseBody: "Token Expired" };
-        }
-        console.log("problem parsing the api call url" + error);
+
+        console.log("problem routing: " + error);
         return { responseStatusCode: 500, responseBody: "Unexpected error occured on server side" };
     }
     finally {

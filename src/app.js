@@ -29,7 +29,7 @@ async function main() {
     DbPool.createPool();
     registerAllRoutes();
     server.listen(process.env.PORT, process.env.HOST);//make server start listening for connections
-    createWebsocketServer(server)
+    createWebsocketServer(server, DbPool)
     console.log("Server is actively listening for connections");
 
     //redis connection setup

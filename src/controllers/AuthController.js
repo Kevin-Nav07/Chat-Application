@@ -30,7 +30,7 @@ class AuthController {
 
             //include custom messages for failed logins and other stuff
             console.log(`Unexpected error occured: ${error}`);
-            return { responseStatusCode: 500, responseBody: "Unexpected logging in" }
+            return { responseStatusCode: 500, responseBody: "Unexpected login error" }
 
 
         }
@@ -104,8 +104,12 @@ class AuthController {
                         return this[handler](refreshToken);
 
                     }
+                    break;
                 case "DELETE":
                     return this[handler](refreshToken);
+                default:
+                    console.log("request does not match a method in the user controller");
+                    return { responseStatusCode: 400, responseBody: "Request does not match a method in the user controller" }
 
             }
 

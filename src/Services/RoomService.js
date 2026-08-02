@@ -80,6 +80,45 @@ ON rooms.id = room_members.room_id WHERE  room_members.user_id = $1`, [id]);
 
     }
 
+    async getRoomsPerUserAsync(user_id, id, created_at, limit) {
+
+        try {
+            let result;
+            if (limit == null) {
+                limit = 2
+
+            }
+            if (id == null || created_at == null) {//if there was no cursor
+                const values = [user_id, limit];
+                console.log("NO CURSOR", created_at, id)
+                result = await this.#_dbClient.query("SELECT rooms.id, rooms.name,rooms.room_type, rooms.created_at \
+                 FROM room_members JOIN rooms ON rooms.id = room_members.room_id WHERE  room_members.user_id=($1)  \
+                ORDER BY created_at DESC, id DESC LIMIT $2", values);
+
+
+            }
+            else {
+                console.log("HAVE CURSOR", created_at, id)
+                const values = [user_id, created_at, id, limit]
+                result = await this.#_dbClient.query("SELECT rooms.id, rooms.name,rooms.room_type, rooms.created_at \
+                 FROM room_members JOIN rooms ON rooms.id = room_members.room_id WHERE  room_members.user_id=($1) AND (rooms.created_at,rooms.id)<($2,$3) \
+                ORDER BY created_at DESC, id DESC LIMIT $4", values);
+            }
+
+
+            return result.rows;
+
+        }
+        catch (error) {
+            console.log("encountered error", error)
+
+            throw error;
+        }
+
+
+
+    }
+
     async getRoomAsync(id) {
         try {
             await this.#_dbClient.query("BEGIN");

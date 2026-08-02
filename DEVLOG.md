@@ -303,3 +303,26 @@ Each websocket connection must authenticate, and when a message comes through we
 #### E2EE(End-to-End Encryption)
 
 this is a method where each client generates 3 keys, private,public and session key. Private key is used to decrypt messages, public key is stored publically for other users to download, it is how you encrypt messages for another user. We use the public and private key to generate a session key with another user and send data as fully encrypted through the clients and into the server.This prevents the server from reading. We wills still send room_id as plaintext. If a user is not authorized to send messages to a room then it won't send. If the room_id tampered with is in the allowed set of rooms to broadcast to, then the message gets sent to the client but decryption fails. This is something very importanbt to implement, but should be done when making the front-end. When doing this method we need to keep in mind the case where a message is sent to a room that the user is in, but the decryption fails for the recieving end because the message was not intended to be sent to that user(as in a malicous user redirected which room to go to). In this case, the server stores the message in the db, and so it is up to the client to deal with these unencrypted messages as garbage or display an empty bubble. We will decide how to solve this problem later so as not to bloat a db with failed messages.
+
+
+# August 1st
+## What I have Planned
+
+-look into different pagination and implement the pagination technique for rooms
+- look into design patterns for internal services
+- implement an internal service to get rooms
+- once we have rooms, load up the connection manager
+## What I Did
+
+-researched cursor and offset pagination
+-implemented cursor pagination endpoint for rooms
+-ensured that user_id is extracted on every request with jwt
+-fixed bugs
+-created ServiceContext class as a semi-factory pattern to create services on the go and execute their functions 
+
+## What I Learned
+
+### Cursor based pagination and Offset
+
+I learned about the tradeoffs of these. I have used offset before, it is better suited to where you can sort and filter data, go to specific points/pages of data, but becomes increasingly more slow as the OFFSET(the paramater of how much data you want to skip) grows. Cursor based pagination essentially saves a cursor, which is like a checkpoint for where you are at your data, and then we encrypt the cursor and send it to the client, if the client wants to continue scrolling we send the request with the current cursor and we construct a SQL expression with a where clause. the where clause specifies that the column(s) we use to base the cursor off of have to be greater than it. This allows a more efficient lookup rather than scanning the table. Much faster than offset based pagination but less customizable. Better for infintie scrolling which is what we are using it for.
+

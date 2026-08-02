@@ -73,6 +73,17 @@ const routeList = [{
     tokenNeeded: true
 },
 {
+    method: "GET",
+    url: "/rooms/cursor",
+    controller: RoomController,
+    handler: "getRoomsForUserAsync",
+    schema: null,
+    expectedPathTypes: null,
+    expectedSearchParamTypes: { cursor: "string", limit: "number" },
+    tokenNeeded: true
+
+},
+{
     method: "POST",
     url: "/auth/login",
     controller: AuthController,

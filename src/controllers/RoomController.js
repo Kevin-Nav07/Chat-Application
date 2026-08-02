@@ -1,13 +1,13 @@
 const { validatePathParamTypes, validateSearchParamTypes, validateBodyFormat } = require('../helpers/APIValidator');
-
+const { decodeCursorIntoParams, encodeParamsIntoCursor } = require('../helpers/Cursor')
 
 const RoomService = require('../Services/RoomService')
 class RoomController {
 
 
-    _service//the service will handle database transactions, the controller will configure what gets sent through and handle the requests
+    #_service//the service will handle database transactions, the controller will configure what gets sent through and handle the requests
     constructor(connection) {
-        this._service = new RoomService(connection)
+        this.#_service = new RoomService(connection)
 
     }
 
@@ -15,7 +15,7 @@ class RoomController {
     async createRoomAsync(body) {
         try {
 
-            await this._service.createRoomAsync(body);
+            await this.#_service.createRoomAsync(body);
             return { responseStatusCode: 201, responseBody: "Object successfully created" }
         }
         catch (error) {
@@ -26,11 +26,11 @@ class RoomController {
     }
 
 
-    async getRoomsAsync(pathParams, searchParams) {
+    async getRoomsAsync(searchParams) {
 
         try {
             const { id = null } = searchParams || {};//if searchParams is null falls on an empty object to destructure to prevent TypeError
-            let rooms = await this._service.getRoomsAsync(id);
+            let rooms = await this.#_service.getRoomsAsync(id);
             console.log(rooms);
             return { responseStatusCode: 200, responseBody: rooms }
 
@@ -42,9 +42,44 @@ class RoomController {
         }
     }
 
+    async getRoomsForUserAsync(searchParams, user_id) {
+        //extract searchParams and get cursor
+
+        const expectedCursorParams = ["id", "created_at"]
+        try {
+            const cursor = searchParams?.cursor;
+            const limit = searchParams?.limit;
+            let cursorParams = null;
+            if (cursor != null) {
+                cursorParams = decodeCursorIntoParams(cursor, expectedCursorParams)
+
+            }
+            const id = cursorParams?.id;
+            const created_at = cursorParams?.created_at
+
+            const rooms = await this.#_service.getRoomsPerUserAsync(user_id, id, created_at, limit)
+            //now we need to get the last value of this batch to denote as the new cursor
 
 
-    async handleRequest(method, body, searchParams, pathName, handler, pathParams, schema, expectedPathTypes, expectedSearchParamType) {
+            const cursorRoom = rooms[rooms.length - 1]//get last row in the result as our new cursor
+            const newCursor = encodeParamsIntoCursor({ id: cursorRoom?.id, created_at: cursorRoom?.created_at });
+
+            return { responseStatusCode: 200, responseBody: { rooms, newCursor } }
+
+        }
+        catch (error) {
+            console.log("encountered error retrieving rooms", error);
+            return { responseStatusCode: 500, responseBody: "Internal Server issue retrieving rooms" }
+        }
+
+
+        //
+
+    }
+
+
+
+    async handleRequest(method, body, searchParams, pathName, handler, pathParams, schema, expectedPathTypes, expectedSearchParamType, refreshToken, user_id) {
         /*
        In POST: always pass in body
        IN GET: always pass in optional pathParams, searchParams
@@ -72,14 +107,19 @@ class RoomController {
                 case "POST":
                     return this[handler](body);
                 case "GET":
-                    return this[handler](pathParams, searchParams);
+
+                    return this[handler](searchParams, user_id);
+
+                default:
+                    console.log("request does not match a method in the user controller");
+                    return { responseStatusCode: 400, responseBody: "Request does not match a method in the user controller" };
 
             }
 
         }
         catch (error) {
             console.log("Bad request", error)
-            return { responseStatusCode: 500, responseBody: "Request does not match a method in the user controller" }
+            return { responseStatusCode: 500, responseBody: "Unexpected error trying to handle the request in the controller" }
 
         }
 

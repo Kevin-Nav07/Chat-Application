@@ -45,31 +45,12 @@ async function createJWT(userId) {// by default every token will have a time of 
 
 }
 
-async function verifyJWT(token) {
-    let verify = util.promisify(jwt.verify)
-    try {
-        const result = await verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] })
-        return result;
-    }
-    catch (error) {
-        if (error instanceof jwt.JsonWebTokenError) {
-            console.log("either malformed or incorrect token");
-        }
-        else if (error instanceof TokenExpiredError) {
-            console.log("JWT token expired");
-        }
-        else {
-            console.log("unexpected jwt verification error", error)
-        }
-        throw error
 
-    }
-}
 
-async function verifyJWT2(cookies) {//takes in a cookies object, parses the cookies, verifies the token,extracts object or user_id
+async function verifyJWT(cookies) {//takes in a cookies object, parses the cookies, verifies the token,extracts object or user_id
     //then proceeds to check
     let verify = util.promisify(jwt.verify);
-    const { accessToken } = cookies?.accessToken;//extract token from cookies
+    const token = cookies?.accessToken;//extract token from cookies
     if (token == null) {//if no token found return status code
         return new APIResponseObj(401, "token not found", "Unauthorized")
     }
@@ -82,15 +63,15 @@ async function verifyJWT2(cookies) {//takes in a cookies object, parses the cook
     catch (error) {
 
         if (error instanceof jwt.JsonWebTokenError) {
-            return APIResponseObj(401, "Incorrect or Malformed Token", "Unauthorized");
+            return new APIResponseObj(401, "Incorrect or Malformed Token", "Unauthorized");
         }
         else if (error instanceof TokenExpiredError) {
 
-            return APIResponseObj(401, "Expired Token", "Unauthorized");
+            return new APIResponseObj(401, "Expired Token", "Unauthorized");
         }
         else {
 
-            return APIResponseObj(500, "Unexpected error with token verification", "Internal Server Error")
+            return new APIResponseObj(500, "Unexpected error with token verification", "Internal Server Error")
         }
 
     }
