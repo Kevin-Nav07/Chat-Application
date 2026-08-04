@@ -326,3 +326,27 @@ this is a method where each client generates 3 keys, private,public and session 
 
 I learned about the tradeoffs of these. I have used offset before, it is better suited to where you can sort and filter data, go to specific points/pages of data, but becomes increasingly more slow as the OFFSET(the paramater of how much data you want to skip) grows. Cursor based pagination essentially saves a cursor, which is like a checkpoint for where you are at your data, and then we encrypt the cursor and send it to the client, if the client wants to continue scrolling we send the request with the current cursor and we construct a SQL expression with a where clause. the where clause specifies that the column(s) we use to base the cursor off of have to be greater than it. This allows a more efficient lookup rather than scanning the table. Much faster than offset based pagination but less customizable. Better for infintie scrolling which is what we are using it for.
 
+
+# August 3rd
+
+## What I Have Planned
+    - test the room retrieval from the ServiceContext
+    - populate the connectionManager with relevant details
+    -Test transmission of messages between users of different rooms
+    -look into redis pub/sub, how it works
+    -try to implement what I can
+## What I Did
+    -got ServiceContext working and populated the conneciton manager
+    -users of different rooms can talk to each other
+    -messages are routed to only users of the room specified.
+    -when connectons drop, the socketManager is cleared of the data
+    -read into pub/sub and RESp(redis protocol)
+
+there is an issue however, when two users connection on different tabs(creating two different ws connections) it adds the connections to the map. This means that the ws connection objects are obviously different with the same user_id, but this also means if the user sends a messsage, the other connection for that user will recieve the message which we need to disable(very quick fix). I will need to decide if this is allowed or you can only have one login at a time.
+
+
+## What I Learned
+
+the Factory pattern is used to have a cleaner seperation of code when it comes to certain dependancies. It ends up with more abstract classes but allows you to only change the factory when instantiating a class rather than the class itself. This allows for cleaner seperation in favor of more complexity. Testing greatly benefits from patterns like this.
+
+Redis uses it's own protocol to communicate between server and redis, called RESP. It seems RESP 2 does not have a handshake on connection and has more limited data types it can send while RESP 3 has the HELLO handshake. Either way both use a TCP connection. RESP 3 also has expanded datatypes to work with and makes it easier to parse on the client-side. Most importantly, RESP 2's pub/sub has a huge limitation where in that a redis connection that issues SUBSCRIBE will dedicate that connection to only recieving published notifications to that channel. the connection cannot be used to publish or execute typical REDIS database/cache commands. You would need 2 seperate connections for each server to publish and subscribe. RESP 3 resolves this but I need to check if nodejs-redis library supports RESP 3. 

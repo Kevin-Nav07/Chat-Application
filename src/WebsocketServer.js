@@ -12,7 +12,7 @@ function createWebSocketServer(server, DbPool) {
 
     //we use no server mode to handle the 'upgrade' event manually from our server file
     const wss = new WebSocketServer({ noServer: true });//wss is the websocket server that listens for incomign websocket connections
-    const connectionManager = new WebsocketManager();
+    const socketManager = new WebsocketManager();
 
     server.on('upgrade', async function upgrade(request, socket, head) {//triggered right before the websocket connection
         //is completed on an upgrade request for http
@@ -20,7 +20,7 @@ function createWebSocketServer(server, DbPool) {
         try {
             //parsing cookies
             const cookies = parseCookies(request);
-            const result = await verifyJWT()//result can either be the JWT payload or a APIResponseObj
+            const result = await verifyJWT(cookies)//result can either be the JWT payload or a APIResponseObj
             if (result == null) {
                 throw new Error("Failed to get validation object");
             }
@@ -89,37 +89,77 @@ function createWebSocketServer(server, DbPool) {
 
         //use the roomService to retrieve the rooms we need on connection
         const rooms = await serviceContext.callServiceMethod(roomService, async (service) => {
-            return await service.getRoomsByUserAsync();
+            return await service.getRoomsPerUserAsync(ws.user_id, null, null, 50);
         })
+        console.log(rooms);
+        //add rooms to the socketManager
 
-        // connectionManager.addConnectionToRoom();//adds the co
+        socketManager.addRoomsToUser(rooms, ws?.user_id);//adds rooms to a user
+        socketManager.addConnectionToRooms(rooms, ws);
+        socketManager.display();
+
+
 
         //primary events: message,close,error
         ws.on('message', (data, isBinary) => {
             //data is in form Buffer
-            let message, room;
-            if (!isBinary) {
-                message = data.toString("utf-8");//can convert a Buffer to a string like this
-            }
-            else {
-                data = unpack(data);
-                ({ room, message } = data);
-            }
-            console.log(`Binary was: ${isBinary} and data is ${data} ${typeof datae}`);
-            //ws.id is how you give connections unique id's
-            wss.clients.forEach((ws2) => {
-                if (ws2 !== ws) {
-                    ws2.send(message);
+            try {
+                let message, room_id;
+                if (!isBinary) {
+                    data = JSON.parse(data.toString("utf-8"));//can convert a Buffer to a string like this
+                    room_id = data?.room_id;
+                    message = data?.message;
+
                 }
-            })
-            console.log("New Message: ", message);
-            // if (message.toLowerCase().trim() === 'close') {
-            //     ws.close();
-            // }
+                else {
+                    data = unpack(data);
+                    room_id = data?.room_id;
+                    message = data?.message;
+                }
+                console.log(`Binary was: ${isBinary} and data is ${data} ${typeof datae}`);
+                //ws.id is how you give connections unique id's
+                if (room_id != null && message != null) {//if we were inded able to extract room and message from the incoming data
+                    if (message.toLowerCase().trim() === 'close') {
+                        ws.close();
+                    }
+                    socketManager.transmitMessageToRoom(room_id, message, ws);
+                    console.log("transmitted Message")
+                }
+                else {
+                    console.log("could not extract data");
+                }
+
+            }
+            catch (error) {
+                console.log("Encountered error processing Message", error);
+                ws.send(pack({ content: "Unexpected error processing message" }));
+
+            }
+
         })//WebSocket object inherits from EventEmitter, so it can emit events
 
         ws.on('close', () => {
-            console.log("Conneciton closed by client");
+            try {
+                //closing a connection means we need to remove the user associated with the connection and then also remove the connection
+                socketManager.deleteUser(ws?.user_id, ws);
+                socketManager.display()
+            }
+            catch (error) {
+                console.log("error deleting the user on the close event: ", error);
+
+            }
+        })
+        ws.on('error', (error) => {
+            try {
+                //closing a connection means we need to remove the user associated with the connection and then also remove the connection
+                socketManager.deleteUser(ws?.user_id, ws);
+                socketManager.display()
+
+            }
+            catch (error) {
+                console.log("error deleting the user on the error event: ", error);
+
+            }
         })
 
         //websocket is deemed as alive

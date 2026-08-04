@@ -12,19 +12,19 @@ class ServiceContext {
 
     static async create(pool) {
         const context = new ServiceContext(pool);
-        context.#_dbClient = await pool.connect();
+        context.#_dbClient = await pool.provideClient()
         return context;
     }
 
-    get createUserService() {
+    createUserService() {
         return new UserService(this.#_dbClient);
     }
 
-    get createRoomService() {
+    createRoomService() {
         return new RoomService(this.#_dbClient);
     }
 
-    get createAuthService() {
+    createAuthService() {
         return new AuthService(this.#_dbClient);
     }
 
