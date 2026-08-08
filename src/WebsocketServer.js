@@ -7,12 +7,13 @@ const APIResponseObj = require('./Models/APIResponseObj');
 const ServiceContext = require('./ServiceContext');
 
 //wss
-function createWebSocketServer(server, DbPool) {
+function createWebSocketServer(server, DbPool, redisConnector) {
 
 
     //we use no server mode to handle the 'upgrade' event manually from our server file
     const wss = new WebSocketServer({ noServer: true });//wss is the websocket server that listens for incomign websocket connections
-    const socketManager = new WebsocketManager();
+    const socketManager = new WebsocketManager(redisConnector);
+    redisConnector.display()
 
     server.on('upgrade', async function upgrade(request, socket, head) {//triggered right before the websocket connection
         //is completed on an upgrade request for http
@@ -91,17 +92,18 @@ function createWebSocketServer(server, DbPool) {
         const rooms = await serviceContext.callServiceMethod(roomService, async (service) => {
             return await service.getRoomsPerUserAsync(ws.user_id, null, null, 50);
         })
-        console.log(rooms);
+
         //add rooms to the socketManager
 
         socketManager.addRoomsToUser(rooms, ws?.user_id);//adds rooms to a user
-        socketManager.addConnectionToRooms(rooms, ws);
+        await socketManager.addConnectionToRooms(rooms, ws);
         socketManager.display();
+        await redisConnector.display();
 
 
 
         //primary events: message,close,error
-        ws.on('message', (data, isBinary) => {
+        ws.on('message', async (data, isBinary) => {
             //data is in form Buffer
             try {
                 let message, room_id;
@@ -116,13 +118,13 @@ function createWebSocketServer(server, DbPool) {
                     room_id = data?.room_id;
                     message = data?.message;
                 }
-                console.log(`Binary was: ${isBinary} and data is ${data} ${typeof datae}`);
+                console.log(`Binary was: ${isBinary} and data is ${data} ${typeof data}`);
                 //ws.id is how you give connections unique id's
                 if (room_id != null && message != null) {//if we were inded able to extract room and message from the incoming data
                     if (message.toLowerCase().trim() === 'close') {
                         ws.close();
                     }
-                    socketManager.transmitMessageToRoom(room_id, message, ws);
+                    await socketManager.transmitMessageToRedis(room_id, message, ws);
                     console.log("transmitted Message")
                 }
                 else {
@@ -138,10 +140,10 @@ function createWebSocketServer(server, DbPool) {
 
         })//WebSocket object inherits from EventEmitter, so it can emit events
 
-        ws.on('close', () => {
+        ws.on('close', async () => {
             try {
                 //closing a connection means we need to remove the user associated with the connection and then also remove the connection
-                socketManager.deleteUser(ws?.user_id, ws);
+                await socketManager.deleteUser(ws?.user_id, ws);
                 socketManager.display()
             }
             catch (error) {
@@ -149,10 +151,10 @@ function createWebSocketServer(server, DbPool) {
 
             }
         })
-        ws.on('error', (error) => {
+        ws.on('error', async (error) => {
             try {
                 //closing a connection means we need to remove the user associated with the connection and then also remove the connection
-                socketManager.deleteUser(ws?.user_id, ws);
+                await socketManager.deleteUser(ws?.user_id, ws);
                 socketManager.display()
 
             }

@@ -350,3 +350,26 @@ there is an issue however, when two users connection on different tabs(creating 
 the Factory pattern is used to have a cleaner seperation of code when it comes to certain dependancies. It ends up with more abstract classes but allows you to only change the factory when instantiating a class rather than the class itself. This allows for cleaner seperation in favor of more complexity. Testing greatly benefits from patterns like this.
 
 Redis uses it's own protocol to communicate between server and redis, called RESP. It seems RESP 2 does not have a handshake on connection and has more limited data types it can send while RESP 3 has the HELLO handshake. Either way both use a TCP connection. RESP 3 also has expanded datatypes to work with and makes it easier to parse on the client-side. Most importantly, RESP 2's pub/sub has a huge limitation where in that a redis connection that issues SUBSCRIBE will dedicate that connection to only recieving published notifications to that channel. the connection cannot be used to publish or execute typical REDIS database/cache commands. You would need 2 seperate connections for each server to publish and subscribe. RESP 3 resolves this but I need to check if nodejs-redis library supports RESP 3. 
+
+# August 7th
+
+
+## What I Have Planned
+
+    -Implement redis pub/sub
+    -connect a redis pub/sub, set it up in the actual redis server
+    -Update send function in connection manager to also send across redis(determine)
+## What I Did
+    -Implemented pub/sub with redis, set up anbd connected everyything
+    - Users can now send messages to channels across servers
+Only thing that needs further help will be fallout logic, if connections blip or error out, proper handling. If messages blip
+
+An issue I came across is that since servers are both publishers and subscribers, if a server that publishes to room_x also had room_x and was subscribed to it, then it would recieve the message again, leading to a duplicate message. Two ways around it, either send the messages to room_x locally, then let the redis roundtrip happen since there is no way to stop it, then attach a server id and when the message comes from redis again, check if the server id is the one that it was sent from, and if so then throw away the message.
+The other proposal was just to not process locally and let the message sent through redis and come back, attaching the user_id so that when the message comes back we can process it locally and ensure it is not sent to the same ws that first sent the message. I read online that in real-time chat apps, when the front end client sends a message it is given a status of "sending" and then when the message is sent to the server and the server sends it through the redis client where it makes its way back to the same server, then we know the message was processed and fanned out by reids pub/sub. So then the server sends back the message to the client and client updates it's messagen sent status with "Sent". Keep this in mind for the future.
+
+## What I Learned
+Redis pub/sub is great for messages in real-time chat apps. I implemented mine with two managers, one manages the redis connections, the other manages the web sockets. The websocket manager uses the redis connection manager to publish, subscribe and unsubscribe. A 
+
+### Redis Clustering and Shards
+
+Redis clustering is a technique which helps horizontally scale redis as more servers are grown. The benefit with REDIS is that it is an efficient storage that can be used by multiple servers, however as servers increase then so does the load on our single redis instance, and so that is where clustering comes in where you essentially have clusters which are hash sets of redis instances. Redis pub/sub has a clustering option where we can manage the different clusters known as shards. It is worth looking into in the future, but I believe it requires some devops type of work

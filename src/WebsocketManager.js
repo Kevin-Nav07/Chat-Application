@@ -1,6 +1,7 @@
 //this will map user_id to websocket connections as well as rooms to websocket connections
 const { WebSocket, WebSocketServer } = require('ws');
 const { unpack, pack } = require('msgpackr');
+const { parse } = require('dotenv');
 
 /* THE CLASS WILL FULLFILL THESE FUNCTIONS
 
@@ -15,9 +16,11 @@ class WebsocketManager {
 
     #roomMap;
     #userMap;
-    constructor() {
+    #redisConnector;
+    constructor(redisConnector) {
         this.#roomMap = new Map();
         this.#userMap = new Map();
+        this.#redisConnector = redisConnector;
 
     }
 
@@ -41,18 +44,19 @@ class WebsocketManager {
         }
     }
 
-    addConnectionToRooms(rooms, connection) {
+    async addConnectionToRooms(rooms, connection) {
         if (rooms == null || connection == null) {
             throw new Error("Error adding connection to rooms, paramater error");
         }
         for (const room of rooms) {
-            this.addConnectionToRoom(room.id, connection)
+            await this.addConnectionToRoom(room.id, connection)
         }
+        await this.#redisConnector.display()
     }
 
 
 
-    addConnectionToRoom(room_id, connection) {//check if a room exists, then check for a connection, and then add or do nothing
+    async addConnectionToRoom(room_id, connection) {//check if a room exists, then check for a connection, and then add or do nothing
 
         if (room_id != null && Number.isFinite(room_id) && connection instanceof WebSocket)//check if room_id is a valid number and connection is WebSocket connection
         {
@@ -61,15 +65,25 @@ class WebsocketManager {
                 if (!this.#roomMap.get(room_id).has(connection)) {//does not have connection
                     //add connection to the set
                     this.#roomMap.get(room_id).add(connection);
+
                 }
                 else {//does have connection.
                     //do nothing?
                 }
             }
             else {//room does not exist in the map
-                //add room to the map and then add the connection
+                //add room to the map and then add the connection and also subscribe to redis to listen to that room
                 this.#roomMap.set(room_id, new Set());
                 this.#roomMap.get(room_id).add(connection);
+                await this.#redisConnector.subscribe(room_id, async (data) => {
+
+                    const parsedMessage = JSON.parse(data);
+                    const message = parsedMessage?.message;
+                    const room_id = parsedMessage?.room_id;
+                    const user_id = parsedMessage?.user_id;
+                    console.log("Recieved message from subscription: ", message, room_id);
+                    await this.fromRedisTransmitMessage(room_id, message, user_id);
+                })
             }
         }
         else {//if inputs are not valid
@@ -77,29 +91,32 @@ class WebsocketManager {
         }
     }
 
-    deleteConnectionInRoom(room_id, connection) {
+    async deleteConnectionInRoom(room_id, connection) {
         //standard deleting a connection in a room if it exists
         if (room_id != null && Number.isFinite(room_id) && connection instanceof WebSocket)//check if room_id is a valid number and connection is WebSocket connection
         {//valid inputs
             if (this.#roomMap.has(room_id)) {//check if the room exists then try to delete the reference
                 this.#roomMap.get(room_id).delete(connection)
+
             }
         }
         else {
             throw new Error("Room_id or connection are not valid inputs");
         }
+        this.#redisConnector.display()
     }
 
-    deleteUser(user_id, connection) {//connection is a pointer to an object
+    async deleteUser(user_id, connection) {//connection is a pointer to an object
         //process deletes a user and all their connections
         //first delete the connections by going through all of the user rooms
 
         for (const room_id of this.#userMap.get(user_id)) {
             //delete each connection in each room
-            this.deleteConnectionInRoom(room_id, connection);
+            await this.deleteConnectionInRoom(room_id, connection);
             //if the room is empty delete the room from the map
             if (this.#roomMap.get(room_id).size === 0) {
                 this.#roomMap.delete(room_id);
+                await this.#redisConnector.unsubscribe(room_id);
             }
 
         }
@@ -111,7 +128,7 @@ class WebsocketManager {
 
 
     //given a room, we transmit a message to every ws connection in that room, besides the sending connection
-    transmitMessageToRoom(room_id, message, wsConnection) {
+    async transmitMessageToRedis(room_id, message, wsConnection) {
 
         //check for valid inputs
 
@@ -119,14 +136,8 @@ class WebsocketManager {
             //check for room existance, then transmit in room
             if (this.checkUserRoomMembership(wsConnection.user_id, room_id)) {//check if the user is in that room
 
-                if (this.#roomMap.has(room_id)) {
-                    //room exists, now we transmit
-                    for (const con of this.#roomMap.get(room_id).keys()) {
-                        if (con != null && con !== wsConnection && con instanceof WebSocket) {
-                            this.sendMessage(con, room_id, message)
-                        }
-                    }
-                }
+                //publish message to redis and then it comes back to this client too
+                await this.#redisConnector.publish(room_id, message, wsConnection?.user_id);//publish to rest of servers
             }
             else {//user is not in room
                 throw new Error("User cannot send to that room");
@@ -140,6 +151,33 @@ class WebsocketManager {
 
 
     }
+    //when a message is sent from redis we use this function to relay it to the ws connections we need
+    async fromRedisTransmitMessage(room_id, message, user_id) {
+        //check for valid inputs
+
+        if (room_id != null && Number.isFinite(room_id) && message != null) {
+            //check for room existance, then transmit in room
+            if (this.#roomMap.has(room_id)) {
+                //room exists, now we transmit to any socket connection in the room
+                for (const con of this.#roomMap.get(room_id).keys()) {
+                    if (con != null && con instanceof WebSocket && con.user_id !== user_id) {
+                        this.sendMessage(con, room_id, message)
+
+
+                    }
+                }
+                console.log("Message was retrieved from redis:", message, room_id)
+            }
+        }
+
+        else {
+            throw new Error("Room_id or connection are not valid inputs");
+        }
+
+    }
+
+
+
 
 
     checkUserRoomMembership(user_id, room_id) {
@@ -178,6 +216,7 @@ class WebsocketManager {
             let data = { room_id: room_id, message: messageContent };
             // data = pack(data);
             connection.send(JSON.stringify(data));
+
         }
         else {
             console.log(`Could not send message to ${room_id}, to user ${connection?.user_id} of content ${messageContent}`)
