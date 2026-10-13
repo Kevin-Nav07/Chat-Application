@@ -373,3 +373,30 @@ Redis pub/sub is great for messages in real-time chat apps. I implemented mine w
 ### Redis Clustering and Shards
 
 Redis clustering is a technique which helps horizontally scale redis as more servers are grown. The benefit with REDIS is that it is an efficient storage that can be used by multiple servers, however as servers increase then so does the load on our single redis instance, and so that is where clustering comes in where you essentially have clusters which are hash sets of redis instances. Redis pub/sub has a clustering option where we can manage the different clusters known as shards. It is worth looking into in the future, but I believe it requires some devops type of work
+
+
+# September 22
+
+Today I pickup this backend for the first time in a long time. I am now using AI to implement CORS. B
+
+## CORS
+
+Cross Origin Resource Sharing allows the backend to talk to a browser with a different origin. An origin is the protocol, host, and port combination
+
+same host, different protocol and port beneath
+https://localhost:5013
+http://localhost:5173
+
+this prevents frontends from accessing any backend they wish.
+
+In order to access a backend we need to relax the same origin policy using CORS, allowing a front end to communicate with a backend across a differnet origin. 
+
+There are a series of other headers we need to keep in mind and I will list them here
+
+## Other Security Headers
+
+- *header 1*
+
+# October 12
+
+- 

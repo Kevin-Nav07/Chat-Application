@@ -17,14 +17,14 @@ const createUserSchema = {
                 { type: "string" }
             ]
         },
-        passwordHash: {
+        password: {
             allOf: [
                 { not: { type: "number" } },
                 { type: "string" }
             ]
         }
     },
-    required: ["email", "username", "passwordHash"],
+    required: ["email", "username", "password"],
     additionalProperties: false
 
 }
@@ -45,14 +45,14 @@ const updateUserSchema = {
                 { type: "string" }
             ]
         },
-        passwordHash: {
+        password: {
             allOf: [
                 { not: { type: "number" } },
                 { type: "string" }
             ]
         }
     },
-    required: ["email", "username", "passwordHash"],
+    required: ["email", "username", "password"],
     additionalProperties: false
 
 }
@@ -94,22 +94,35 @@ const createRoomSchema = {
 const loginSchema = {
     type: "object",
     properties: {
-        user_id: {
-            type: "number"
-
+        username: {
+            allOf: [
+                { not: { type: "number" } },
+                { type: "string" }
+            ]
         },
         password: {
             allOf: [
                 { not: { type: "number" } },
                 { type: "string" }
             ]
-
         }
-
-
-
     },
-    required: ["user_id", "password"],
+    required: ["username", "password"],
     additionalProperties: false
 }
-module.exports = { createUserSchema, updateUserSchema, createRoomSchema, loginSchema }
+
+const createFriendshipSchema = {
+    type: "object",
+    properties: {
+        receiver_id: {
+            allOf: [
+                { not: { type: "string" } },
+                { type: "integerr", minimum: 1 }
+            ]
+        }
+
+    },
+    required: ["receiver_id"],
+    additionalProperties: false
+}
+module.exports = { createFriendshipSchema, createUserSchema, updateUserSchema, createRoomSchema, loginSchema }

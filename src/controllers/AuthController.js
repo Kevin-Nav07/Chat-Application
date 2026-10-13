@@ -12,25 +12,25 @@ class AuthController {
 
     //login Generate Refresh and access token
     //POST
-    async login(body)//expected body {id: 21, password: example123}
-    //try loggin in, if any error occurs throw a 500, but we can also have a custom error later down the line to simulate failed Logins
-    {
+    async login(body) { // expected body { username: "example", password: "example123" }
         console.log("INSIDE LOGIN")
         try {
-            const { password, user_id } = body;
-            if (password == null || user_id == null) {
-                return { responseStatusCode: 400, responseBody: "Missing Password or User" };
+            const { username, password } = body; // extracts username and plaintext password from request payload
+            if (username == null || password == null) {
+                return { responseStatusCode: 400, responseBody: "Missing username or password" };
             }
-            const tokens = await this.#_service.login(user_id, password);
+            const tokens = await this.#_service.login(username, password); // passes username and password to auth service
             return { responseStatusCode: 200, responseCookies: tokens, responseBody: "Login successful" };
 
 
         }
         catch (error) {
-
-            //include custom messages for failed logins and other stuff
-            console.log(`Unexpected error occured: ${error}`);
-            return { responseStatusCode: 500, responseBody: "Unexpected login error" }
+            console.log(`Login error encountered: ${error}`);
+            // Return 401 Unauthorized for bad credentials rather than exposing internal 500 error
+            if (error.message === "Invalid username or password") {
+                return { responseStatusCode: 401, responseBody: error.message }; // unauthorized status for invalid credentials
+            }
+            return { responseStatusCode: 500, responseBody: "Unexpected login error" };
 
 
         }

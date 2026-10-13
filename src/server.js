@@ -10,6 +10,7 @@ const fs = require('node:fs');//for file reading
 
 
 const { setCookies } = require('./helpers/UserAuthenticator');
+const { handleCorsPreflight, applySecurityAndCorsHeaders, validateHostHeader } = require('./helpers/SecurityHeaders'); // helper functions for security headers, cors handling, and host validation
 /*http server takes an optional Options object paramater and a RequestListener function
 of form: where request is the request object representative of an IncomingMEssage object, response is a ServerResponse object
 function(request,response):void {
@@ -33,92 +34,89 @@ const httpsOptions = {
         require('constants').SSL_OP_NO_TLSv1 |
         require('constants').SSL_OP_NO_TLSv1_1
 };
-
+const MAX_BODY_SIZE = 1e6; // 1 Megabyte limit to protect memory from payload attacks
 const server = https.createServer(httpsOptions, function (req, res) {
-    let body = ""
+    // 0. Validate incoming Host header to defend against host header injection attacks
+    if (!validateHostHeader(req, res)) {
+        return; // terminates request lifecycle if host header is untrusted
+    }
+
+    // 1. Intercept CORS preflight OPTIONS requests early
+    if (handleCorsPreflight(req, res)) {
+        return;
+    }
+    const method = req.method; // extract HTTP method directly from req
+    const url = req.url; // extract URL path directly from req
+    let body = ""; // string accumulator for stream chunks
+    let bytesReceived = 0; // counter to track payload size
     res.on('error', (error) => {
         console.log("Error encountered with the response", error);
-    })
-
+    });
+    // 2. Stream chunk listener with size guarding
     req.on('data', (chunk) => {
-        body += chunk
-    })
-
-
+        bytesReceived += chunk.length;
+        // If client sends more data than our limit, reject to prevent Out Of Memory crashes
+        if (bytesReceived > MAX_BODY_SIZE) {
+            res.statusCode = 413; // 413 Payload Too Large
+            applySecurityAndCorsHeaders(req, res);
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ message: "Payload too large. Maximum size is 1MB." }));
+            req.destroy(); // destroy the request stream to stop incoming data
+            return;
+        }
+        body += chunk; // accumulate data chunks
+    });
     req.on('end', async () => {
         try {
-            console.log("in end")
-            const { method, statusCode, statusMessage, url } = parseJSON(req);
-
-            if (body != null || body.length !== 0) {
-
+            let parsedBody = null; // default to null for requests without a body
+            // 3. Only parse JSON if body content exists and method supports bodies
+            const hasBody = body.trim().length > 0;
+            const methodsWithBody = ['POST', 'PUT', 'PATCH'];
+            if (methodsWithBody.includes(method) && hasBody) {
                 try {
-                    body = JSON.parse(body)
+                    parsedBody = JSON.parse(body); // parse incoming JSON payload into an object
+                } catch (parseError) {
+                    // Fail fast on malformed JSON instead of silently passing invalid data
+                    applySecurityAndCorsHeaders(req, res);
+                    res.setHeader('Content-Type', 'application/json');
+                    res.statusCode = 400; // 400 Bad Request
+                    res.end(JSON.stringify({ message: "Invalid JSON format in request body" }));
+                    return; // halt execution so routing does not run
                 }
-                catch (error) {
-                    console.log("invalid body format, it must be JSON");
-                    body = "{}";
-                }
-
             }
-
-            //parsing cookies
-            let cookies = parseCookies(req);
-            console.log(cookies);
-
-
-            const response = await route(body, url, method, cookies);
-            let responseStatusCode = response.responseStatusCode;
+            // 4. Parse incoming cookies
+            const cookies = parseCookies(req);
+            // 5. Delegate to Router
+            const response = await route(parsedBody, url, method, cookies);
+            const responseStatusCode = response.responseStatusCode || 200;
             let responseBody = response.responseBody;
-            let responseCookies = response.responseCookies;
-
-
-            res.statusCode = responseStatusCode
+            const responseCookies = response.responseCookies;
+            // 6. Set response status, cookies, and security headers
+            res.statusCode = responseStatusCode;
             if (responseCookies != null) {
                 setCookies(res, responseCookies);
             }
-            const headers = new Map([['Content-Type', 'application/json'], ['test-Header', 'Kevo']])
-
-            res.setHeaders(headers);//headers must be an instance of Map or Header class
-
-            if (typeof responseBody === 'object' || Array.isArray(responseBody)) {
-                responseBody = JSON.stringify(responseBody);
-
+            applySecurityAndCorsHeaders(req, res);
+            res.setHeader('Content-Type', 'application/json');
+            // 7. Format and write response body
+            if (typeof responseBody === 'string') {
+                responseBody = { message: responseBody };
             }
-            else if (typeof responseBody === 'string') {
-                responseBody = JSON.stringify({ responseMessage: responseBody });
+            res.end(JSON.stringify(responseBody ?? {}));
+        } catch (e) {
+            console.log("Problem with the request/response cycle:\n" + e + e.stack);
+            if (!res.headersSent) { // check that headers were not already flushed before writing error
+                applySecurityAndCorsHeaders(req, res);
+                res.setHeader('Content-Type', 'application/json');
+                res.statusCode = 500;
+                res.end(JSON.stringify({ message: "Unexpected error encountered on the server side" }));
             }
-            else {
-                responseBody = JSON.stringify(responseBody);
-            }
-
-            res.write(responseBody);
-            res.end()
-
-
-
         }
-        catch (e) {
-            console.log("problem with the request/response cycle:\n" + e + e.stack);
-            const headers = new Map([['Content-Type', 'application/json'], ['test-Header', 'Kevo']])
-
-            res.setHeaders(headers);
-            res.statusCode = 500;
-            res.write(JSON.stringify({ "message": "Unexpected error encountered on the server side" }));
-            res.end()
-        }
-
-
-    })
+    });
     req.on('error', (error) => {
-        console.log("Error encountered trying to read streamable data :\n" + error)
-    })
-
-
-    console.log("Client sent a request")
-
+        console.log("Error encountered trying to read streamable data:\n" + error);
+    });
 });
-
 
 
 server.on("connection", () => {

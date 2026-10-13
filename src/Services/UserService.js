@@ -23,10 +23,21 @@ class UserService {
 
         }
 
+    }
 
-
-
-
+    async getUserByNameAsync(username) {
+        try {
+            await this._dbClient.query('BEGIN')
+            let result = await this._dbClient.query('SELECT * FROM USERS WHERE username=$1', [username])//perform query with prepared statement
+            //result variable stores the result object, which contains a lot of database information we can limit down to just the objects
+            await this._dbClient.query('COMMIT')
+            return result.rows[0]//the array of objects we get back from the database
+        }
+        catch (exception) {
+            console.log("Error occured with database transaction " + exception);
+            await this._dbClient.query("ROLLBACK");//undoes everything from the transaction
+            throw exception
+        }
     }
 
     async GetUsersAsync(filter) {
@@ -50,12 +61,12 @@ class UserService {
     }
 
     async createUserAsync(body) {
-        let { email, username, passwordHash } = body
+        const { email, username, password } = body // extracts plaintext credentials from the incoming request body
         try {
             await this._dbClient.query('BEGIN')
 
-            passwordHash = await hashPassword(passwordHash)
-            const values = [email, username, passwordHash]
+            const passwordHash = await hashPassword(password) // creates a salted bcrypt hash from the plain password
+            const values = [email, username, passwordHash] // binds parameters safely for postgres prepared statement
             let result = await this._dbClient.query(`INSERT INTO USERS (email,username,passwordhash) VALUES($1,$2,$3)`, values)//perform query with prepared statement
             //result variable stores the result object, which contains a lot of database information we can limit down to just the objects
             await this._dbClient.query('COMMIT')
@@ -73,10 +84,11 @@ class UserService {
 
     }
     async updateUserAsync(body, id) {
-        const { email, username, passwordHash } = body
+        const { email, username, password } = body // extracts updated fields including plaintext password
         try {
             await this._dbClient.query('BEGIN')
-            const values = [id, email, username, passwordHash]
+            const passwordHash = await hashPassword(password) // hashes the new password with bcrypt before updating the record
+            const values = [id, email, username, passwordHash] // binds id and updated fields for parameterized query
             let result = await this._dbClient.query(`UPDATE USERS SET email=$2, username=$3, passwordHash=$4 WHERE id=$1`, values)//perform query with prepared statement
             //result variable stores the result object, which contains a lot of database information we can limit down to just the objects
             await this._dbClient.query('COMMIT')

@@ -1,6 +1,8 @@
 const UserController = require('../Controllers/UserController');
 const RoomController = require('../Controllers/RoomController');
 const AuthController = require('../Controllers/AuthController');
+const FriendshipController = require('../Controllers/FriendshipController');
+const { createFriendshipSchema } = require('./Schemas');
 
 
 const routeList = [{
@@ -12,6 +14,16 @@ const routeList = [{
     expectedPathTypes: { id: "number" },
     expectedSearchParamTypes: { filter: "string" },
     tokenNeeded: true
+},
+{
+    method: "GET",
+    url: "/users/name/:username",
+    controller: UserController,
+    handler: "getUserByNameAsync",
+    schema: null,
+    expectedPathTypes: { username: "string" },
+    expectedSearchParamTypes: null,
+    tokenNeeded: false
 },
 {
     method: "GET",
@@ -112,6 +124,43 @@ const routeList = [{
     expectedPathTypes: null,
     expectedSearchParamTypes: null,
     tokenNeeded: false
+},
+{
+    method: "POST",
+    url: "/friendship",
+    controller: FriendshipController,
+    handler: "createFriendRequest",
+    schema: createFriendshipSchema,
+    expectedPathTypes: null,
+    expectedSearchParamTypes: null,
+    tokenNeeded: true
+},
+{
+    method: "GET",
+    url: "/friendship",
+    controller: FriendshipController,
+    handler: "getFriendRequests",
+    expectedPathTypes: null,
+    expectedSearchParamTypes: { status: "string" },
+    tokenNeeded: true
+},
+{
+    method: "PUT",
+    url: "/friendship/accept",
+    controller: FriendshipController,
+    handler: "acceptFriendRequest",
+    expectedPathTypes: null,
+    expectedSearchParamTypes: null,
+    tokenNeeded: true
+},
+{
+    method: "DELETE",
+    url: "/friendship/:id",
+    controller: FriendshipController,
+    handler: "deleteFriendRequest",
+    expectedPathTypes: { id: "number" },
+    expectedSearchParamTypes: null,
+    tokenNeeded: true
 }
 ]
 

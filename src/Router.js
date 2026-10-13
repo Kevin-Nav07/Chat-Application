@@ -41,7 +41,7 @@ function registerRoute(routeObject) {
         }
         else {
             paramaterName = paramater.substring(paramater.indexOf(":") + 1).trim();
-            expression = (`(?<${paramaterName}>([0-9]|[a-z])+)`);
+            expression = `(?<${paramaterName}>[^\\/]+)`;
         }
         return expression
     });

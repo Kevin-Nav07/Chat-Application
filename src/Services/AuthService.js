@@ -11,27 +11,27 @@ class AuthService {
     }
 
     //loginMethod
-    async login(id, password) {
+    async login(username, password) {
         try {
-            const userService = new UserService(this.#_dbClient);
+            const userService = new UserService(this.#_dbClient); // instantiate user service with current db connection
 
-            //retrieve user
-            const user = await userService.getUserAsync(id);
+            //retrieve user by username rather than numeric id
+            const user = await userService.getUserByNameAsync(username);
             if (user == null) {
-                throw new Error("Requested User does not exist");
+                throw new Error("Invalid username or password"); // generic error prevents user enumeration
             }
 
-            const { passwordhash } = user; //extract password
+            const { id, passwordhash } = user; // extract internal user id and stored password hash
 
-            //compare password — must be awaited, verifyPassword is async
+            //compare incoming plain password against stored bcrypt hash
             const passwordIsValid = await verifyPassword(password, passwordhash);
             if (!passwordIsValid) {
-                throw new Error("Incorrect Password");
+                throw new Error("Invalid username or password"); // identical error message for failed password verification
             }
 
-            //correct password — create refresh token and access token
-            const accessToken = await createJWT(id);
-            const refreshToken = await this.#insertNewRefreshToken(id); //creates it in the database and returns the unhashed token
+            //correct password — create refresh token and access token using the retrieved user id
+            const accessToken = await createJWT(id); // signs jwt payload containing user id
+            const refreshToken = await this.#insertNewRefreshToken(id); // creates it in the database and returns the unhashed token
 
             if (refreshToken == null || accessToken == null) {
                 throw new Error("Tokens not generated properly");

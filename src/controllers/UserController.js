@@ -11,16 +11,10 @@ class UserController {
     _service//the service will handle database transactions, the controller will configure what gets sent through and handle the requests
     constructor(connection) {
         this._service = new UserService(connection)
-
-
-
     }
-
 
     async getUserAsync({ pathParams, searchParams }) {
         //first destructure and extract pathParams nd searchParams into variables
-
-
 
         try {
             console.log(pathParams, searchParams);
@@ -38,7 +32,6 @@ class UserController {
                 return { responseStatusCode: 200, responseBody: user }
             }
 
-
         }
         catch (error) {
             if (error instanceof DatabaseError) {
@@ -49,9 +42,25 @@ class UserController {
                 console.log(error)
                 return { responseStatusCode: 500, responseBody: "Unexpected server error encountered" }
             }
-
         }
+    }
+    async getUserByNameAsync({ pathParams }) {
+        //from pathParams extract the exact username
+        try {
+            const { username } = pathParams;
+            if (username == null) {
 
+                return { responseStatusCode: 400, responseBody: "Missing username path paramater" };
+            }
+            const user = await this._service.getUserByNameAsync(username);
+            if (user == null) {
+                return { responseStatusCode: 404, responseBody: "User Not Found" }
+            }
+            return { responseStatusCode: 200, responseBody: user }
+        }
+        catch (error) {
+            return { responseStatusCode: 500, responseBody: "Unexpected server side error" };
+        }
 
     }
     async getUsersAsync({ searchParams }) {
