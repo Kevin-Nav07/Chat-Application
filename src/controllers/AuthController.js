@@ -1,6 +1,6 @@
-const { error } = require('ajv/dist/vocabularies/applicator/dependencies');
 const AuthService = require('../Services/AuthService');
 const { validatePathParamTypes, validateSearchParamTypes, validateBodyFormat } = require('../helpers/APIValidator');
+const { errorToResponse } = require('../helpers/ErrorExtensions');
 
 class AuthController {
 
@@ -12,80 +12,58 @@ class AuthController {
 
     //login Generate Refresh and access token
     //POST
+    //tokens go into HttpOnly cookies so browser javascript can never read them (protects against XSS token theft),
+    //the body only returns the public user info so the frontend knows who is logged in
     async login(body) { // expected body { username: "example", password: "example123" }
-        console.log("INSIDE LOGIN")
         try {
             const { username, password } = body; // extracts username and plaintext password from request payload
-            if (username == null || password == null) {
-                return { responseStatusCode: 400, responseBody: "Missing username or password" };
-            }
-            const tokens = await this.#_service.login(username, password); // passes username and password to auth service
-            return { responseStatusCode: 200, responseCookies: tokens, responseBody: "Login successful" };
-
-
+            const { tokens, user } = await this.#_service.login(username, password); // passes username and password to auth service
+            return { responseStatusCode: 200, responseCookies: tokens, responseBody: { message: "Login successful", user } };
         }
         catch (error) {
             console.log(`Login error encountered: ${error}`);
-            // Return 401 Unauthorized for bad credentials rather than exposing internal 500 error
-            if (error.message === "Invalid username or password") {
-                return { responseStatusCode: 401, responseBody: error.message }; // unauthorized status for invalid credentials
-            }
-            return { responseStatusCode: 500, responseBody: "Unexpected login error" };
-
-
+            return errorToResponse(error, "Unexpected login error");//bad credentials come back as a 401 HttpError from the service
         }
-
-
     }
 
     //this method creates a new Access token by validating an incoming unhashed refreshToken and then creating a new access token and rotating the refresh token
     //POST
     async refresh(refreshToken) {
-        console.log("INSIDE REFRESH")
         try {
             const tokens = await this.#_service.refresh(refreshToken);
-            console.log("After refresh:", tokens);
             return { responseStatusCode: 200, responseBody: "Tokens generated", responseCookies: tokens };
-
-
         }
         catch (error) {
-            //catch different error types like refresh token expired, refresh token malformed/incorrect
-            console.log(`Unexpected erorr encountered: ${error}`);
-            return { responseStatusCode: 500, responseBody: "Error creating refresh token" };
+            //a missing, unknown or expired refresh token is a 401 so the frontend knows to send the user back to the login page
+            console.log(`Error refreshing tokens: ${error}`);
+            return errorToResponse(error, "Error creating refresh token");
         }
-
-
     }
 
-
+    //POST
+    //deletes the refresh token from the database and tells the browser to delete both cookies
     async logout(refreshToken) {
         try {
             await this.#_service.logout(refreshToken);
-            return { responseStatusCode: 200, responseBody: "Successfuly logged out" };
+            //empty values make setCookies send Max-Age=0, which makes the browser remove the cookies
+            return { responseStatusCode: 200, responseBody: "Successfuly logged out", responseCookies: { accessToken: "", refreshToken: "" } };
         }
         catch (error) {
-            console.log("Unexpected error during logout");
-            return { responseStatusCode: 500, responseBody: "Failed logout" };
+            console.log("Unexpected error during logout", error);
+            return errorToResponse(error, "Failed logout");
         }
     }
 
 
     async handleRequest(method, body, searchParams, pathName, handler, pathParams, schema, expectedPathTypes, expectedSearchParamType, refreshToken) {
         /*
-       In POST: always pass in body
-       IN GET: always pass in optional pathParams, searchParams
-       IN DELETE: alway spass in mandatory pathParams
-       IN PUT: always pass in PathParams
-   
-       for each instance we call the handler and pass in the paramaters we need too.
-       for each pathParamater set we pass in we can assume it is the correct pathParams since we did validation beforehand
-       //before we pass in, we need to use our ApiValidator class to validate queryParams and Body Schema(this is only needed if there is)
+        every auth route is a POST. login reads the credentials from the body,
+        refresh and logout read the refresh token that the router pulled out of the cookies
        */
 
         try {
             validatePathParamTypes(expectedPathTypes, pathParams);
-            searchParams = validateSearchParamTypes(expectedSearchParamType, searchParams);//returns a newly constructed object so it converts the searchParams from an iterable to an object if valid
+            validateSearchParamTypes(expectedSearchParamType, searchParams);
             validateBodyFormat(schema, body);
         }
         catch (error) {
@@ -95,34 +73,20 @@ class AuthController {
         }
 
         try {
-            switch (method) {
-                case "POST":
-                    if (handler === "login") {
-                        return this[handler](body);
-                    }
-                    else if (handler == "refresh") {
-                        return this[handler](refreshToken);
-
-                    }
-                    break;
-                case "DELETE":
-                    return this[handler](refreshToken);
-                default:
-                    console.log("request does not match a method in the user controller");
-                    return { responseStatusCode: 400, responseBody: "Request does not match a method in the user controller" }
-
+            if (method !== "POST") {
+                return { responseStatusCode: 405, responseBody: "Request does not match a method in the auth controller" }
             }
-
+            if (handler === "login") {
+                return await this.login(body);
+            }
+            return await this[handler](refreshToken);//refresh and logout
         }
         catch (error) {
             console.log("Bad request", error)
-            return { responseStatusCode: 500, responseBody: "Request does not match a method in the user controller" }
-
+            return errorToResponse(error, "Unexpected error in the auth controller");
         }
 
     }
-
-    //
 
 }
 

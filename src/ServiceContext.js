@@ -31,6 +31,7 @@ class ServiceContext {
     async close() {
         if (this.#_dbClient) {
             this.#_dbClient.release();
+            this.#_dbClient = null;//prevents releasing the same client twice, which pg treats as an error
         }
     }
 

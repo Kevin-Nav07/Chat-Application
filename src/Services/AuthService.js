@@ -1,5 +1,6 @@
 const UserService = require('./UserService');
 const { verifyPassword, generateRefreshToken, hashRefreshToken, createJWT } = require('../helpers/UserAuthenticator');
+const { HttpError } = require('../helpers/ErrorExtensions');
 
 const REFRESH_TOKEN_LIFETIME_DAYS = 5;
 
@@ -10,15 +11,15 @@ class AuthService {
         this.#_dbClient = connection
     }
 
-    //loginMethod
+    //checks the username and password, then returns new tokens plus the public user info so the frontend knows who logged in
     async login(username, password) {
         try {
             const userService = new UserService(this.#_dbClient); // instantiate user service with current db connection
 
             //retrieve user by username rather than numeric id
-            const user = await userService.getUserByNameAsync(username);
+            const user = await userService.getUserCredentialsByUsernameAsync(username);
             if (user == null) {
-                throw new Error("Invalid username or password"); // generic error prevents user enumeration
+                throw new HttpError(401, "Invalid username or password"); // generic error prevents user enumeration
             }
 
             const { id, passwordhash } = user; // extract internal user id and stored password hash
@@ -26,7 +27,7 @@ class AuthService {
             //compare incoming plain password against stored bcrypt hash
             const passwordIsValid = await verifyPassword(password, passwordhash);
             if (!passwordIsValid) {
-                throw new Error("Invalid username or password"); // identical error message for failed password verification
+                throw new HttpError(401, "Invalid username or password"); // identical error message for failed password verification
             }
 
             //correct password — create refresh token and access token using the retrieved user id
@@ -37,7 +38,8 @@ class AuthService {
                 throw new Error("Tokens not generated properly");
             }
 
-            return { refreshToken, accessToken }; //refreshToken is a random string from crypto, accessToken is a JWT
+            //refreshToken is a random string from crypto, accessToken is a JWT, user never includes the password hash
+            return { tokens: { refreshToken, accessToken }, user: { id, username: user.username } };
         }
         catch (error) {
             throw error;
@@ -52,8 +54,8 @@ class AuthService {
     // once, in one place, instead of repeating it before every throw.
     async refresh(refreshToken) {
         try {
-            if (refreshToken == null) {
-                throw new Error("Invalid Token");
+            if (refreshToken == null || refreshToken === "") {
+                throw new HttpError(401, "Refresh token missing");
             }
             const hashedToken = hashRefreshToken(refreshToken);
             const currentDate = new Date();
@@ -69,7 +71,7 @@ class AuthService {
             const tokenObject = result.rows[0];
 
             if (tokenObject == null) {
-                throw new Error("Refresh Token Not Found");
+                throw new HttpError(401, "Refresh token not found");//either never existed, already rotated, or the user logged out
             }
 
             if (tokenObject.expiration < currentDate) {
@@ -77,7 +79,7 @@ class AuthService {
                 // transaction rolls back on throw anyway, we just let it be — a future refresh
                 // attempt with this same token will hit this same branch, or a periodic cleanup
                 // job removes stale rows independently.
-                throw new Error("Refresh Token has expired");
+                throw new HttpError(401, "Refresh token has expired");
             }
 
             // verification complete — issue a new access token and rotate the refresh token
@@ -159,9 +161,14 @@ class AuthService {
     1. Their refresh token must be deleted
     2. Their access token must be invalidated somehow(figure out)*/
 
+    //deletes the refresh token so it can never be used again. Logging out with no token is not an error,
+    //the user is already logged out, so it simply does nothing
     async logout(refreshToken) {
         try {
-            this.deleteRefreshToken(refreshToken);
+            if (refreshToken == null || refreshToken === "") {
+                return;
+            }
+            await this.deleteRefreshToken(refreshToken);//await is required, without it a failure becomes an unhandled rejection that crashes node
         }
         catch (error) {
             console.log("issue logging out", error);

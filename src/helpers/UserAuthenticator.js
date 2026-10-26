@@ -28,10 +28,7 @@ async function createJWT(userId) {// by default every token will have a time of 
     }
     else {
         const sec = process.env.JWT_SECRET;//retrieve the JWT secret we created
-        const givenDate = new Date();
-        const expirationDate = new Date();
         let asyncSign = util.promisify(jwt.sign)
-        const expirationTime = expirationDate.setMinutes(expirationDate.getMinutes() + 60);///set expiration as 1 hour ahead of current date
         const payload = {
             user_id: userId,
 
@@ -62,12 +59,13 @@ async function verifyJWT(cookies) {//takes in a cookies object, parses the cooki
     }
     catch (error) {
 
-        if (error instanceof jwt.JsonWebTokenError) {
-            return new APIResponseObj(401, "Incorrect or Malformed Token", "Unauthorized");
-        }
-        else if (error instanceof TokenExpiredError) {
-
+        //TokenExpiredError is a subclass of JsonWebTokenError, so it has to be checked first or it would be reported as malformed.
+        //the frontend relies on the "Expired Token" message to know it should call /auth/refresh instead of logging the user out
+        if (error instanceof jwt.TokenExpiredError) {
             return new APIResponseObj(401, "Expired Token", "Unauthorized");
+        }
+        else if (error instanceof jwt.JsonWebTokenError) {
+            return new APIResponseObj(401, "Incorrect or Malformed Token", "Unauthorized");
         }
         else {
 
@@ -80,7 +78,6 @@ async function verifyJWT(cookies) {//takes in a cookies object, parses the cooki
 
 
 async function generateRefreshToken() {
-    const secureString2 = crypto.randomBytes(32).toString('hex')
     const randomBytesAsync = util.promisify(crypto.randomBytes);
     const secureString = await randomBytesAsync(32);//this generates a random string serving as our refreshToken
     return secureString.toString('hex');
@@ -94,6 +91,14 @@ function hashRefreshToken(token) {//this method of hashing is less complicated t
 
 }
 
+//how long each cookie should live in the browser, in seconds, matching the lifetime of the token inside it
+const COOKIE_MAX_AGE_SECONDS = {
+    accessToken: 60 * 60, // 1 hour, same as the JWT expiresIn
+    refreshToken: 60 * 60 * 24 * 5 // 5 days, same as REFRESH_TOKEN_LIFETIME_DAYS in AuthService
+};
+
+//builds one Set-Cookie header per cookie. An empty string value means "delete this cookie",
+//which is done by sending Max-Age=0 so the browser expires it immediately
 function setCookies(outgoingRequest, cookies) {//outgoingRequest is of type OutgoingRequest from node js http library
     //cookies is an object containing all the cookies in key-value pairs
     const cookiesArray = []
@@ -103,7 +108,9 @@ function setCookies(outgoingRequest, cookies) {//outgoingRequest is of type Outg
             //this encoding prevents CRLF attacks
             const safeKey = encodeURIComponent(key);
             const safeValue = encodeURIComponent(value);
-            cookiesArray.push(`${safeKey}=${safeValue}; Secure; HttpOnly; SameSite=Strict; Path=/`);
+            const maxAge = value === "" ? 0 : COOKIE_MAX_AGE_SECONDS[key];
+            const maxAgeAttribute = maxAge != null ? `; Max-Age=${maxAge}` : "";//cookies without Max-Age only last until the browser closes
+            cookiesArray.push(`${safeKey}=${safeValue}; Secure; HttpOnly; SameSite=Strict; Path=/${maxAgeAttribute}`);
         }
 
     }

@@ -129,9 +129,9 @@ server.on("connection", () => {
 server.on('error', (error) => {
     console.log("error")
     if (error.code === 'EADDRINUSE') {
-        console.log(`Port ${PORT} is already in use. Please free up the port or use a different one.`);
+        console.log(`Port ${process.env.PORT} is already in use. Please free up the port or use a different one.`);
     } else if (error.code === 'EACCES') {
-        console.log(`Permission denied. Port ${PORT} requires elevated privileges.`);
+        console.log(`Permission denied. Port ${process.env.PORT} requires elevated privileges.`);
     } else {
         console.log('Server failed to start:', error);
     }

@@ -86,12 +86,20 @@ function createWebSocketServer(server, DbPool, redisConnector) {
         //get rooms associated with the user
         //use the service context to create a room service for us
         const serviceContext = await ServiceContext.create(DbPool);
-        const roomService = serviceContext.createRoomService();
+        let rooms;
+        try {
+            const roomService = serviceContext.createRoomService();
 
-        //use the roomService to retrieve the rooms we need on connection
-        const rooms = await serviceContext.callServiceMethod(roomService, async (service) => {
-            return await service.getRoomsPerUserAsync(ws.user_id, null, null, 50);
-        })
+            //use the roomService to retrieve the rooms we need on connection
+            rooms = await serviceContext.callServiceMethod(roomService, async (service) => {
+                return await service.getRoomsPerUserAsync(ws.user_id, null, null, 50);
+            })
+        }
+        finally {
+            //the context holds a pool client until close() is called. Without this every websocket connection
+            //kept one forever, and once the pool's 10 clients were used up every http request would hang
+            await serviceContext.close();
+        }
 
         //add rooms to the socketManager
 
@@ -134,7 +142,7 @@ function createWebSocketServer(server, DbPool, redisConnector) {
             }
             catch (error) {
                 console.log("Encountered error processing Message", error);
-                ws.send(pack({ content: "Unexpected error processing message" }));
+                ws.send(JSON.stringify({ error: "Unexpected error processing message" }));//json like every other message, so the frontend only needs one parser
 
             }
 

@@ -11,11 +11,13 @@ function parseJSON(request) {
 
 }
 
-function parseUrl(url, url_host) {
-    const url_obj = URL.parse(`http://${url_host}${url}`)//put it into aurl object which will naturally destructure it into parts
-    pathName = url_obj.pathname
-    search = url_obj.search
-    searchParameters = url_obj.searchParams
+//splits a request url like /friendship?status=pending into its path and its search paramaters
+function parseUrl(url) {
+    //URL needs a full address to parse, so a placeholder base is given; only the path and query of the result are used
+    const url_obj = new URL(url, "http://localhost")
+    const pathName = url_obj.pathname
+    const search = url_obj.search
+    const searchParameters = url_obj.searchParams
     return { pathName, search, searchParameters }
 
 }

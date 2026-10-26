@@ -1,9 +1,5 @@
-
-
-
-const { default: validation } = require('ajv/dist/vocabularies/validation');
 const { ajv } = require('./SchemaValidation')
-
+const { HttpError } = require('./ErrorExtensions')
 
 
 //what sanitizations do we need?
@@ -13,8 +9,8 @@ const { ajv } = require('./SchemaValidation')
 //have validaiton for content-type header to ward off anything but json or chunks
 
 
-
-function validateURLFormat(pathName, search) {//returns True if a valid url, false false
+//returns true if the path only contains slashes and url safe characters, throws a 400 HttpError otherwise
+function validateURLFormat(pathName) {
 
     if (pathName === undefined || pathName.length == 0) {
         return true
@@ -26,18 +22,13 @@ function validateURLFormat(pathName, search) {//returns True if a valid url, fal
         return true
 
     }
-    else {
-
-        throw new Error("path name is malformed or not of correct format")
-    }
+    throw new HttpError(400, "path name is malformed or not of correct format")
 
 }
 
 function checkValidMethod(method) {
-    if (method.trim() === "GET" || method.trim() === "PUT" || method.trim() === "POST" || method.trim() === "DELETE") {
-        return true
-    }
-    return false
+    const trimmed = method?.trim();
+    return trimmed === "GET" || trimmed === "PUT" || trimmed === "POST" || trimmed === "DELETE";
 }
 function isNumeric(str) {
     if (typeof str !== 'string') return false;
@@ -49,16 +40,9 @@ function validatePathParamTypes(expectedParamTypes, actualParams) {
     /*
     expectedParamTypes: object of key,value where key is the paramater name, value is paramater type
     actualParams: object of key,value where key is paramater name, value is the value of the incoming paramater for the request
-    
 
-    given your actualParams, it is assumed already the expectedParam has all the actualParams
-
-    what we need to do is iterate through our actualParams, compare it to the type of expected params and perform type coeercion where needed
-    return T or F throw an error upon a type mismatch, 
-    
-    first check if the actualParams key exists in the expected params, if it does not throw
-
-    then if it does exist, check if the data type exists or they are the same data type
+    iterate through our actualParams, compare it to the type of expected params and perform type coeercion where needed
+    throws an error upon a type mismatch or an unexpected paramater
 
     if the expected type is a number
      case 1: the actual type is a number(stored as a string) we convert and store it in the value to replace
@@ -68,102 +52,63 @@ function validatePathParamTypes(expectedParamTypes, actualParams) {
         case 1: the actual type is a string(stored as a string) we check as if string and leave it be
         case 2: the actual type is a number(stored as a string) we check if the actual cannot be a number
     */
-    console.log(actualParams, expectedParamTypes)
-    if (actualParams !== null || actualParams !== undefined) {
-        for (const key in actualParams) {
-            //if expected param is a number, then make sure to try and convert and then store it in the actual type
-            if (expectedParamTypes[key] !== undefined) {//check if key,value is in expected type
-                if (expectedParamTypes[key] === 'number') { //if expected type is number 
-
-                    if (isNumeric(actualParams[key])) {//actual type is a number
-
-                        actualParams[key] = Number(actualParams[key])//convert value for the params
-                    }
-                    else {//actual type is not a number, throw error
-                        throw new Error("path paramater expected to be a number but was not")
-                    }
-                }
-                else if (expectedParamTypes[key] === 'string') {//expected type is a string
-                    if (isNumeric(actualParams[key]))//actual is a number
-                    {
-                        throw new Error("path parameter expected to be a string but was a number")
-                    }
-
-                }
-            }
-            else {//if we did not expect this path paramater throw error
-                throw new Error("path paramater", key, "not expected");
-
-            }
-
-
-        }
+    if (actualParams == null) {//no path paramaters in this url, nothing to check
         return true
     }
-    else {
-        return false
+    for (const key in actualParams) {
+        if (expectedParamTypes?.[key] === undefined) {//if we did not expect this path paramater throw error
+            throw new Error(`path paramater ${key} not expected`);
+        }
+        if (expectedParamTypes[key] === 'number') { //if expected type is number
+            if (!isNumeric(actualParams[key])) {//actual type is not a number, throw error
+                throw new Error("path paramater expected to be a number but was not")
+            }
+            actualParams[key] = Number(actualParams[key])//convert value for the params
+        }
+        else if (expectedParamTypes[key] === 'string') {//expected type is a string
+            if (isNumeric(actualParams[key]))//actual is a number
+            {
+                throw new Error("path parameter expected to be a string but was a number")
+            }
+        }
     }
+    return true
 }
 
 function validateSearchParamTypes(expectedSearchParamTypes, actualSearchParams) {
     //Takes in an object expectedSearchParamTypes and an iterable URLSearchParam called actualSearchParams and returns an object version
     //of actualSearchparams with values converted
-    //takes in actualSearchParams(an iterable), iterate through and then for each actualSearchParam, checks if it is in the expectedSearchParamTypes,
-    //if it is in the expected, compare their types by comparing the type of the value of the search paramater to the expectedSearchParamType,
-    //if it is not in the expected searchParamTypes, return False
+    //for each actualSearchParam, checks if it is in the expectedSearchParamTypes and if so compares the types,
+    //if it is not in the expected searchParamTypes, throws
 
-
-    searchParamObject = Object.fromEntries(actualSearchParams);
     if (actualSearchParams == null) {//if the actual params are not specified
+        return {}
+    }
+    const searchParamObject = Object.fromEntries(actualSearchParams);
+    if (expectedSearchParamTypes == null)//if the expected params are none, extra params are ignored
+    {
         return searchParamObject
     }
-    else {//if the paramaters are specified
-        if (expectedSearchParamTypes == null)//if the expected params are none
-        {
-            return searchParamObject
+
+    for (const [key, value] of actualSearchParams) {
+        if (!(key in expectedSearchParamTypes)) {
+            throw new Error(`search paramater ${key} is not in the expected search paramaters`);
         }
-        else {//if we do expect some paramaters, now we check if the expected matches the actual
-
-
-            for (const [key, value] of actualSearchParams) {
-                //if the key expects in 
-                if (key in expectedSearchParamTypes) {//if the search paramater exists in the expected, then check type
-
-
-                    if (expectedSearchParamTypes[key] === 'number') { //if expected type is number 
-
-                        if (isNumeric(value)) {//actual type is a number
-
-                            searchParamObject[key] = Number(value);
-
-                        }
-                        else {//actual type is not a number but a string, so validation fails
-                            throw new Error("search paramater expected to be a number but was not")
-                        }
-                    }
-                    else if (expectedSearchParamTypes[key] === 'string') {//expected type is a string
-                        if (isNumeric(value))//actual is a number
-                        {
-                            throw new Error("search parameter expected to be a string but was a number")
-                        }
-                        //expected type is a string, so we leave it and do nothing,Validation passes
-
-                    }
-
-                }
-                else {
-                    throw new Error("search paramater is not in the expected search paramaters");
-                }
-
+        if (expectedSearchParamTypes[key] === 'number') { //if expected type is number
+            if (!isNumeric(value)) {//actual type is not a number but a string, so validation fails
+                throw new Error("search paramater expected to be a number but was not")
             }
-            return searchParamObject //all the search paramaters we recieved are expected
-
+            searchParamObject[key] = Number(value);
         }
-
-
-
+        else if (expectedSearchParamTypes[key] === 'string') {//expected type is a string
+            if (isNumeric(value))//actual is a number
+            {
+                throw new Error("search parameter expected to be a string but was a number")
+            }
+            //expected type is a string, so we leave it and do nothing,Validation passes
+        }
     }
-
+    return searchParamObject //all the search paramaters we recieved are expected
 }
 
 function validateBodyFormat(schemaName, otherBody) {
@@ -176,24 +121,23 @@ function validateBodyFormat(schemaName, otherBody) {
     case 2: a schema is not defined:
         - a body is not expected but one is sent(ignore)
         -a body is not expected but one is not sent(continue)
-    case 3: 
-
     */
 
     if (schemaName == null) {//no schema defined
         return true
     }
-    else {//schema is defined
-
-        schemaValidator = ajv.getSchema(schemaName)//retrieves the schema valdiator from the cache
-        if (otherBody !== null && typeof otherBody === "object" && validation && schemaValidator(otherBody)) {//matches schema
-            return true
-        }
-        else {//
-
-            throw new Error("Schema Validation Failed, body was not of the correct format")
-        }
+    const schemaValidator = ajv.getSchema(schemaName)//retrieves the schema valdiator from the cache by the name it was registered under
+    if (schemaValidator === undefined) {//a developer mistake, the route names a schema that was never registered in SchemaValidation.js
+        throw new Error(`Schema ${schemaName} is not registered with ajv`);
     }
+    if (otherBody === null || typeof otherBody !== "object") {
+        throw new Error("Schema Validation Failed, request body is missing")
+    }
+    if (!schemaValidator(otherBody)) {
+        //errorsText turns ajv's error list into a readable sentence the frontend can show, for example "data/password must NOT have fewer than 8 characters"
+        throw new Error("Schema Validation Failed: " + ajv.errorsText(schemaValidator.errors))
+    }
+    return true
 
 }
 

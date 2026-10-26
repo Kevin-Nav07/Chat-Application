@@ -2,10 +2,10 @@
   "name": "chat-application",
   "version": "1.0.0",
   "description": "Chat application that will allow multiple users to login and chat in real time via the internet. This will allow for real-time communication. It will allow for users to sign up and log in with credentials, then add people as friends where they may chat individually or as a group.",
-  "main": "server.js",
+  "main": "src/app.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js"
+    "test": "node --test tests/api.test.js",
+    "start": "node src/app.js"
   },
   "repository": {
     "type": "git",
