@@ -180,6 +180,9 @@ describe("Authentication Endpoints", () => {
     test("POST /auth/refresh - unknown refresh token returns 401", async () => {
         const res = await route(null, "/auth/refresh", "POST", { refreshToken: "not-a-real-token" });
         assert.strictEqual(res.responseStatusCode, 401);
+        // a dead refresh token must be removed from the browser so it does not keep failing on every visit
+        assert.strictEqual(res.responseCookies?.accessToken, "", "accessToken cookie must be cleared");
+        assert.strictEqual(res.responseCookies?.refreshToken, "", "refreshToken cookie must be cleared");
     });
 
     // tests logout deletes the refresh token and tells the browser to clear both cookies
@@ -425,6 +428,37 @@ describe("Friendship Endpoints", () => {
     test("POST /friendship - sending a request back the other way returns 409", async () => {
         const res = await route({ receiver_id: userA.id }, "/friendship", "POST", userB.cookies);
         assert.strictEqual(res.responseStatusCode, 409);
+    });
+
+    // the schema only allows exactly one way of naming the receiver
+    test("POST /friendship - sending both receiver_id and receiver_username returns 400", async () => {
+        const res = await route({ receiver_id: userC.id, receiver_username: userC.username }, "/friendship", "POST", userA.cookies);
+        assert.strictEqual(res.responseStatusCode, 400);
+    });
+
+    test("POST /friendship - sending neither receiver field returns 400", async () => {
+        const res = await route({}, "/friendship", "POST", userA.cookies);
+        assert.strictEqual(res.responseStatusCode, 400);
+    });
+
+    test("POST /friendship - unknown receiver_username returns 404", async () => {
+        const res = await route({ receiver_username: `nobody_${timestamp}` }, "/friendship", "POST", userA.cookies);
+        assert.strictEqual(res.responseStatusCode, 404);
+    });
+
+    test("POST /friendship - friending yourself by username returns 400", async () => {
+        const res = await route({ receiver_username: userA.username }, "/friendship", "POST", userA.cookies);
+        assert.strictEqual(res.responseStatusCode, 400);
+    });
+
+    // the username lookup ignores case, then the request is deleted so later tests start from the same state
+    test("POST /friendship - receiver_username with different casing creates a request", async () => {
+        const res = await route({ receiver_username: userA.username.toUpperCase() }, "/friendship", "POST", userC.cookies);
+        assert.strictEqual(res.responseStatusCode, 201);
+        assert.strictEqual(res.responseBody.receiver_id, userA.id, "The request must be addressed to the matching user");
+
+        const cleanup = await route(null, `/friendship/${res.responseBody.id}`, "DELETE", userC.cookies);
+        assert.strictEqual(cleanup.responseStatusCode, 200);
     });
 
     test("GET /friendship?status=invalid - returns 400", async () => {

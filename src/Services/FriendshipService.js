@@ -69,6 +69,22 @@ class FriendshipService {
         }
     }
 
+    // creates a friend request when the caller only knows the receiver's username
+    // looks the username up to get the id, then reuses createFriendRequest so every business rule stays in one place
+    async createFriendRequestByUsername(sender_id, receiver_username) {
+        // LOWER on both sides makes the match case insensitive, which is safe because signup already
+        // refuses usernames that only differ by case, so this can never match more than one user
+        const result = await this.#_dbClient.query(
+            "SELECT id FROM users WHERE LOWER(username) = LOWER($1)",
+            [receiver_username]
+        );
+        // no user has this name, 404 so the frontend can tell the person the username does not exist
+        if (result.rowCount === 0) {
+            throw new HttpError(404, `No user found with the username ${receiver_username}`);
+        }
+        return await this.createFriendRequest(sender_id, result.rows[0].id);
+    }
+
     // retrieves friend requests or friends based on status filter
     async getFriendRequests(user_id, status = 'pending') {
         try {

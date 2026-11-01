@@ -15,7 +15,10 @@ class FriendshipController {
     // handles POST /friendship
     async createFriendRequest(body, user_id) {
         try {
-            const result = await this.#_service.createFriendRequest(user_id, body.receiver_id);//body shape was already checked by createFriendshipSchema
+            //createFriendshipSchema guarantees exactly one of receiver_username or receiver_id is present
+            const result = body.receiver_username != null
+                ? await this.#_service.createFriendRequestByUsername(user_id, body.receiver_username)
+                : await this.#_service.createFriendRequest(user_id, body.receiver_id);
             return { responseStatusCode: 201, responseBody: result };
         }
         catch (error) {

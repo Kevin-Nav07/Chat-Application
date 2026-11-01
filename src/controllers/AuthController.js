@@ -36,7 +36,13 @@ class AuthController {
         catch (error) {
             //a missing, unknown or expired refresh token is a 401 so the frontend knows to send the user back to the login page
             console.log(`Error refreshing tokens: ${error}`);
-            return errorToResponse(error, "Error creating refresh token");
+            const response = errorToResponse(error, "Error creating refresh token");
+            if (response.responseStatusCode === 401) {
+                //the refresh token is missing, unknown or expired and can never work again, so the browser is told to delete
+                //both cookies. Otherwise the dead cookie would stay for up to 5 days and fail the same way on every visit
+                response.responseCookies = { accessToken: "", refreshToken: "" };
+            }
+            return response;
         }
     }
 

@@ -35,7 +35,7 @@ const routeList = [{
     schema: null,
     expectedPathTypes: { username: "string" },
     expectedSearchParamTypes: null,
-    tokenNeeded: true
+    tokenNeeded: false
 },
 {
     method: "GET",

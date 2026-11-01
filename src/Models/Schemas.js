@@ -105,6 +105,7 @@ const loginSchema = {
 
 //**********************Friendships *****************************///
 
+//the receiver can be named either by id or by username, the frontend uses the username because that is what people type
 const createFriendshipSchema = {
     type: "object",
     properties: {
@@ -113,10 +114,20 @@ const createFriendshipSchema = {
                 { not: { type: "string" } },
                 { type: "integer", minimum: 1 }
             ]
+        },
+        receiver_username: {
+            allOf: [
+                { not: { type: "number" } },
+                { type: "string", minLength: 1, maxLength: 32 }
+            ]
         }
 
     },
-    required: ["receiver_id"],
+    //oneOf passes only when exactly one branch matches, so sending both fields or neither field is rejected with a 400
+    oneOf: [
+        { required: ["receiver_id"] },
+        { required: ["receiver_username"] }
+    ],
     additionalProperties: false
 }
 
