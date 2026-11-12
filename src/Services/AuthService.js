@@ -1,5 +1,5 @@
 const UserService = require('./UserService');
-const { verifyPassword, generateRefreshToken, hashRefreshToken, createJWT } = require('../helpers/UserAuthenticator');
+const { verifyPassword, verifyPasswordForMissingUser, generateRefreshToken, hashRefreshToken, createJWT } = require('../helpers/UserAuthenticator');
 const { HttpError } = require('../helpers/ErrorExtensions');
 
 const REFRESH_TOKEN_LIFETIME_DAYS = 5;
@@ -19,6 +19,7 @@ class AuthService {
             //retrieve user by username rather than numeric id
             const user = await userService.getUserCredentialsByUsernameAsync(username);
             if (user == null) {
+                await verifyPasswordForMissingUser(password); // takes as long as a real check, so timing does not reveal the username is unknown
                 throw new HttpError(401, "Invalid username or password"); // generic error prevents user enumeration
             }
 

@@ -12,10 +12,22 @@ async function hashPassword(password) {
 }
 
 async function verifyPassword(password, hashedPassword) {
-    return await bcrypt.compare(password, hashedPassword);//compares the incoming unhashed password by hashing it and 
+    return await bcrypt.compare(password, hashedPassword);//compares the incoming unhashed password by hashing it and
     // extracting the salt to the stored db hashed and salted password
 
 
+}
+
+// A real bcrypt hash of a throwaway password, created the first time it is needed and reused after that
+let dummyHashPromise = null;
+
+// Spends the same time as checking a real password, then reports a failure.
+// Login uses it when the username does not exist. Without it, "no such user" answered instantly while
+// "wrong password" took a bcrypt check, so the response time told an attacker which usernames are real
+async function verifyPasswordForMissingUser(password) {
+    dummyHashPromise ??= bcrypt.hash("placeholder password used only for timing", SALT_ROUNDS); // ??= only assigns when it is still null
+    await bcrypt.compare(password, await dummyHashPromise);
+    return false;
 }
 
 
@@ -121,4 +133,4 @@ function setCookies(outgoingRequest, cookies) {//outgoingRequest is of type Outg
 
 
 }
-module.exports = { hashPassword, verifyPassword, createJWT, verifyJWT, generateRefreshToken, hashRefreshToken, setCookies }
+module.exports = { hashPassword, verifyPassword, verifyPasswordForMissingUser, createJWT, verifyJWT, generateRefreshToken, hashRefreshToken, setCookies }

@@ -76,6 +76,19 @@ CREATE INDEX IF NOT EXISTS idx_room_members_user
 CREATE INDEX IF NOT EXISTS idx_friendships_lookup 
     ON friendships(sender_id, receiver_id);
 
-CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user 
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user
     ON refresh_tokens(user_id);
+
+-- 8. Row Level Security (RLS)
+-- Supabase automatically offers a public REST API (PostgREST) for every table in the public schema. Anyone holding
+-- the project's anon or publishable key could use it to read or change these tables, password hashes included.
+-- Turning RLS on with NO policies makes that API return nothing for those keys.
+-- The Node server is unaffected: it connects as the role that owns these tables, and owners skip RLS
+-- (unless FORCE ROW LEVEL SECURITY is used, which it is not). Safe to run more than once.
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE refresh_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE friendships ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rooms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE room_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 

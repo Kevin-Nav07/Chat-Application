@@ -30,6 +30,13 @@ const ALLOWED_HOSTS = readListFromEnv('ALLOWED_HOSTS') ?? [
     '127.0.0.1' // loopback ip address without port
 ];
 
+// True when a request's Origin header names one of our own frontends.
+// Browsers always send Origin on websocket handshakes and on cross site POST, PUT and DELETE requests, and a web page
+// cannot fake it, so checking it stops other websites from using a visitor's cookies against this server
+function isAllowedOrigin(origin) {
+    return typeof origin === 'string' && ALLOWED_ORIGINS.includes(origin);
+}
+
 // List of allowed HTTP verbs for cross-origin requests
 const ALLOWED_METHODS = 'GET, POST, PUT, DELETE, OPTIONS';
 
@@ -108,6 +115,7 @@ module.exports = {
     applyCorsHeaders,
     applySecurityAndCorsHeaders,
     handleCorsPreflight,
-    validateHostHeader
+    validateHostHeader,
+    isAllowedOrigin
 };
 
