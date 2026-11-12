@@ -36,14 +36,22 @@ const createUserSchema = {
 }
 
 const updateUserSchema = {
-    //PUT replaces the whole user, so every field is still required
+    //PUT replaces the whole user, so every field is still required.
+    //current_password proves the person editing the account knows its password, so someone who only got hold of a
+    //logged in session (for example on a shared computer) cannot change the email and password and lock the owner out
     type: "object",
     properties: {
         email: emailField,
         username: usernameField,
-        password: passwordField
+        password: passwordField,
+        current_password: {
+            allOf: [
+                { not: { type: "number" } },
+                { type: "string", minLength: 1, maxLength: 72 }
+            ]
+        }
     },
-    required: ["email", "username", "password"],
+    required: ["email", "username", "password", "current_password"],
     additionalProperties: false
 
 }
@@ -59,7 +67,8 @@ const createRoomSchema = {
             ]
 
         },
-        name: {
+        name: {//required for groups, ignored for direct rooms (RoomService checks this), because a direct room is shown
+            //to each member under the OTHER person's username, so one stored name would be wrong for one of them
             allOf: [
                 { not: { type: "number" } },
                 { type: "string", minLength: 1, maxLength: 100 }
@@ -70,13 +79,13 @@ const createRoomSchema = {
             type: "array",
             maxItems: 10,//max number of users for a single room
             uniqueItems: true, // ensures the items of the array are unique to prevent duplication
-            items: { type: "integer", minimum: 1 },
+            items: { type: "integer", minimum: 1, maximum: 2147483647 },//the maximum is the largest id postgres's int type can hold
 
         }
 
 
     },
-    required: ["room_type", "name", "users"],
+    required: ["room_type", "users"],
     additionalProperties: false
 }
 
@@ -89,13 +98,13 @@ const loginSchema = {
         username: {
             allOf: [
                 { not: { type: "number" } },
-                { type: "string" }
+                { type: "string", maxLength: 32 }//no real username is longer, so anything bigger is rejected before reaching the database
             ]
         },
         password: {
             allOf: [
                 { not: { type: "number" } },
-                { type: "string" }
+                { type: "string", maxLength: 72 }//bcrypt only reads 72 bytes, so there is no reason to accept more
             ]
         }
     },

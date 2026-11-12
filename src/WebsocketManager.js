@@ -46,6 +46,11 @@ class WebsocketManager {
         return this.#connectionRooms.has(connection);
     }
 
+    // How many sockets this user has open on this server, used to cap connections per user
+    socketCountForUser(user_id) {
+        return this.#userConnections.get(user_id)?.size ?? 0;
+    }
+
     // Adds one socket to one room. The first socket in a room on this server subscribes the server to that room's Redis channel.
     // Does nothing for a socket that already closed, which is what prevents dead sockets being added after a slow database call
     async joinRoom(connection, room_id) {

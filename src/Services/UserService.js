@@ -1,5 +1,5 @@
 
-const { hashPassword } = require('../helpers/UserAuthenticator')
+const { hashPassword, verifyPassword } = require('../helpers/UserAuthenticator')
 const { HttpError, PG_UNIQUE_VIOLATION } = require('../helpers/ErrorExtensions')
 
 class UserService {
@@ -56,23 +56,6 @@ class UserService {
         }
     }
 
-    //lists every user with only their public fields, emails are private so they are not included
-    async GetUsersAsync() {
-        try {
-            await this._dbClient.query('BEGIN')
-            let result = await this._dbClient.query('SELECT id, username FROM USERS ORDER BY id')
-            //result variable stores the result object, which contains a lot of database information we can limit down to just the objects
-            await this._dbClient.query('COMMIT')
-            return result.rows//the array of objects we get back from the database
-        }
-        catch (error) {
-            console.log("Error occured when retrieving users: " + error);
-            await this._dbClient.query("ROLLBACK");//undoes everything from the transaction
-            throw error
-        }
-
-    }
-
     //throws a 409 HttpError if another user (other than excludeId) already has this username or email.
     //the users table has no UNIQUE constraint yet, so this check is the only thing stopping duplicate accounts
     async #ensureUsernameAndEmailAvailable(username, email, excludeId = null) {
@@ -118,10 +101,20 @@ class UserService {
         }
 
     }
+    //replaces the user's email, username and password. The caller must prove they know the current password,
+    //and afterwards every refresh token of the account is deleted, so every logged in device has to log in again.
+    //that is what makes "change your password" actually kick out someone who had stolen a session
     async updateUserAsync(body, id) {
-        const { email, username, password } = body // extracts updated fields including plaintext password
+        const { email, username, password, current_password } = body // extracts updated fields including plaintext passwords
         try {
             await this._dbClient.query('BEGIN')
+            const existing = await this._dbClient.query('SELECT passwordhash FROM USERS WHERE id=$1 FOR UPDATE', [id]);//FOR UPDATE locks the row until COMMIT so two edits cannot interleave
+            if (existing.rowCount === 0) {
+                throw new HttpError(404, "User not found");
+            }
+            if (!(await verifyPassword(current_password, existing.rows[0].passwordhash))) {
+                throw new HttpError(403, "Current password is incorrect");
+            }
             await this.#ensureUsernameAndEmailAvailable(username, email, id);//the user's own current name and email do not count as taken
             const passwordHash = await hashPassword(password) // hashes the new password with bcrypt before updating the record
             const values = [id, email, username, passwordHash] // binds id and updated fields for parameterized query
@@ -129,6 +122,7 @@ class UserService {
             if (result.rowCount == 0) {//checked before COMMIT so the catch block can still roll back
                 throw new HttpError(404, "User not found");
             }
+            await this._dbClient.query('DELETE FROM refresh_tokens WHERE user_id = $1', [id]);//signs the account out everywhere, in the same transaction as the change
             await this._dbClient.query('COMMIT')
             return result.rows[0]
         }

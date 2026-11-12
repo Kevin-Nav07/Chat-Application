@@ -20,14 +20,17 @@ class RoomController {
         this.#_messageService = new MessageService(connection); // injects database client into message service
     }
 
-    // POST /rooms, the logged in user becomes a member of the room they create
+    // POST /rooms, the logged in user becomes a member of the room they create.
+    // Answers 201 for a new room. For a direct room that already existed it answers 200 with that room,
+    // so the "Message" button can call this every time and always lands in the one conversation with that friend
     async createRoomAsync(body, user_id) {
         try {
-            const room = await this.#_service.createRoomAsync(body, user_id);
-            // the same shape GET /rooms returns, a brand new room has no messages yet
-            const { members, ...roomDetails } = room;
-            await notifyRoomCreated({ ...roomDetails, last_message: null }, members); // live sockets of every member join the room
-            return { responseStatusCode: 201, responseBody: room };
+            const { room, members, created, nameByMember } = await this.#_service.createRoomAsync(body, user_id);
+            if (created) {
+                // the same shape GET /rooms returns, a brand new room has no messages yet
+                await notifyRoomCreated({ ...room, last_message: null }, members, nameByMember); // live sockets of every member join the room
+            }
+            return { responseStatusCode: created ? 201 : 200, responseBody: { ...room, members } };
         } catch (error) {
             console.log(error.message);
             return errorToResponse(error, "Failed to create resource at the requested URL");

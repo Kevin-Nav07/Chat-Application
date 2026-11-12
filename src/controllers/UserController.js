@@ -68,17 +68,6 @@ class UserController {
         }
 
     }
-    async getUsersAsync() {
-        try {
-            const users = await this._service.GetUsersAsync();
-            return { responseStatusCode: 200, responseBody: users };//an empty list is still a successful answer, so it is a 200 not an error
-        }
-        catch (error) {
-            console.log("Error encountered retrieving users", error);
-            return errorToResponse(error, "Unexpected server error encountered");
-        }
-    }
-
     //POST /users (sign up), returns 201 with the created user so the frontend gets the new id straight away
     async createUserAsync({ body }) {
         try {
@@ -109,7 +98,8 @@ class UserController {
 
     }
 
-    //PUT /users/:id, a user may only update their own account
+    //PUT /users/:id, a user may only update their own account, and must send their current password.
+    //every session is signed out by the service, so this browser's cookies are cleared too and the person logs in again
     async updateUserAsync({ pathParams, body, user_id }) {
         try {
             const { id } = pathParams
@@ -117,7 +107,7 @@ class UserController {
                 return { responseStatusCode: 403, responseBody: "You can only update your own account" };
             }
             const user = await this._service.updateUserAsync(body, id);
-            return { responseStatusCode: 200, responseBody: user };
+            return { responseStatusCode: 200, responseBody: user, responseCookies: { accessToken: "", refreshToken: "" } };
         }
         catch (error) {
             console.log("Error encountered updating user", error);

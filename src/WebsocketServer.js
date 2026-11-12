@@ -4,9 +4,16 @@ const { verifyJWT } = require('./helpers/UserAuthenticator');
 const { parseCookies } = require('./helpers/Parsers');
 const APIResponseObj = require('./Models/APIResponseObj');
 const ServiceContext = require('./ServiceContext');
+const { isAllowedOrigin } = require('./helpers/SecurityHeaders');
+const { limiters } = require('./helpers/RateLimiter');
 
 const MAX_CONTENT_LENGTH = 4000; // longest message, in characters, after trimming
 const MAX_CLIENT_MESSAGE_ID_LENGTH = 100; // the browser generates a UUID (36 characters), this leaves generous room
+// Largest frame a client may send. 4000 characters is at most 16 KB of UTF-8, plus the JSON around it.
+// The ws library's default is 100 MiB, which let one client make the server hold huge frames in memory
+const MAX_FRAME_BYTES = 32 * 1024;
+const MAX_SOCKETS_PER_USER = 5; // a few tabs or devices is normal, hundreds is a script
+const SESSION_EXPIRED_CLOSE_CODE = 4001; // codes 4000 to 4999 are free for apps to use; the client reconnects, which refreshes the token
 
 // Sends a JSON object to one socket, skipping sockets that are no longer open so a late reply never throws
 function sendJson(ws, payload) {
@@ -38,12 +45,19 @@ function rejectUpgrade(socket, statusCode, statusText, body) {
 // Configures and mounts the WebSocket server with authentication, persistence, and Redis pub/sub
 function createWebSocketServer(server, DbPool, redisConnector) {
     // noServer mode lets the upgrade request be authenticated before it becomes a websocket
-    const wss = new WebSocketServer({ noServer: true });
+    const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
     const socketManager = new WebsocketManager(redisConnector);
 
-    // Checks the access token cookie on the HTTP upgrade request, then upgrades the connection only if it is valid
+    // Checks where the request came from and the access token cookie on the HTTP upgrade request,
+    // then upgrades the connection only if both are fine and the user is not over their connection limits
     server.on('upgrade', async function upgrade(request, socket, head) {
         try {
+            // A browser always sends Origin on a websocket handshake. Checking it stops another website from opening
+            // a socket with a visitor's cookies and reading their messages (cross site websocket hijacking)
+            if (!isAllowedOrigin(request.headers.origin)) {
+                rejectUpgrade(socket, 403, "Forbidden", "Origin not allowed");
+                return;
+            }
             const result = await verifyJWT(parseCookies(request));
             if (result instanceof APIResponseObj) { // verification failed, result holds the 401 or 500 to send back
                 rejectUpgrade(socket, result.responseStatusCode, result.responseTitle ?? "Unauthorized", String(result.responseBody));
@@ -54,8 +68,13 @@ function createWebSocketServer(server, DbPool, redisConnector) {
                 rejectUpgrade(socket, 401, "Unauthorized", "No valid user id in token");
                 return;
             }
+            if (!limiters.socketConnectPerUser.hit(`user:${user_id}`) || socketManager.socketCountForUser(user_id) >= MAX_SOCKETS_PER_USER) {
+                rejectUpgrade(socket, 429, "Too Many Requests", "Too many connections");
+                return;
+            }
             wss.handleUpgrade(request, socket, head, function done(ws) {
                 ws.user_id = user_id; // every later handler trusts this id, it came from the verified token
+                ws.tokenExpiresAt = result.exp * 1000; // exp is in seconds since 1970, JavaScript timers use milliseconds
                 wss.emit("connection", ws);
             });
         } catch (error) {
@@ -107,6 +126,12 @@ function createWebSocketServer(server, DbPool, redisConnector) {
             sendMessageError(ws, room_id, client_message_id, "INVALID_MESSAGE", `Message must be between 1 and ${MAX_CONTENT_LENGTH} characters`);
             return;
         }
+        // Checked before any database or Redis work, so a flood costs the server almost nothing and cannot use up
+        // the free tier quotas. The key is the user, not the socket, so opening more tabs does not raise the limit
+        if (!limiters.socketMessagePerUser.hit(`user:${ws.user_id}`)) {
+            sendMessageError(ws, room_id, client_message_id, "RATE_LIMITED", "You are sending messages too fast. Wait a few seconds and try again.");
+            return;
+        }
 
         try {
             // saveMessageAsync checks membership in the database, which is the source of truth. There is no separate
@@ -148,8 +173,16 @@ function createWebSocketServer(server, DbPool, redisConnector) {
             console.error("Failed to subscribe to the user's channel:", error); // live room:new events will not arrive, everything else still works
         });
 
+        // The token was only checked when the socket opened. Closing the socket when that token expires means a stolen
+        // or logged out token cannot keep a connection alive forever. The browser reconnects straight away, which goes
+        // through /users/me and the refresh flow, so a real user only sees a blink
+        const expiryTimer = setTimeout(() => {
+            ws.close(SESSION_EXPIRED_CLOSE_CODE, "Session expired");
+        }, Math.max(ws.tokenExpiresAt - Date.now(), 0));
+
         // 'error' is always followed by 'close', and removeConnection is safe to call twice
         const cleanUp = () => {
+            clearTimeout(expiryTimer); // the socket is gone, so its expiry timer must not keep running
             socketManager.removeConnection(ws).catch((error) => console.error("Error cleaning up closed socket:", error));
         };
         ws.on('close', cleanUp);

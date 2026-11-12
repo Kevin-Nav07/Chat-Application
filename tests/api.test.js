@@ -107,6 +107,22 @@ describe("Router", () => {
         const res = await route(null, "/users/a.b", "GET", userA.cookies);
         assert.strictEqual(res.responseStatusCode, 400);
     });
+
+    // the HTTP server always passes the client's address; this test passes one by hand to switch the per address limits on.
+    // 203.0.113.x is an address range reserved for documentation, so it can never belong to a real client
+    test("login is rate limited per address: the 11th attempt in 5 minutes returns 429", async () => {
+        const options = { clientIp: "203.0.113.77" };
+        const credentials = { username: `nobody_${timestamp}`, password: "WrongPassword1!" };
+        for (let i = 1; i <= 10; i++) {
+            const res = await route(credentials, "/auth/login", "POST", null, options);
+            assert.strictEqual(res.responseStatusCode, 401, `Attempt ${i} must still reach the login check`);
+        }
+        const blocked = await route(credentials, "/auth/login", "POST", null, options);
+        assert.strictEqual(blocked.responseStatusCode, 429);
+
+        const otherAddress = await route(credentials, "/auth/login", "POST", null, { clientIp: "203.0.113.78" });
+        assert.strictEqual(otherAddress.responseStatusCode, 401, "A different address must not be blocked");
+    });
 });
 
 // tests authentication endpoints
@@ -334,22 +350,16 @@ describe("User Endpoints", () => {
         assert.strictEqual(res.responseStatusCode, 404);
     });
 
-    // tests listing all users and ensures none of them leak password hashes or emails
-    test("GET /users - lists users without password hashes or emails", async () => {
+    // listing every user was removed because it handed out every account id; POST /users still exists on the same path
+    test("GET /users - listing every user is not available (405)", async () => {
         const res = await route(null, "/users", "GET", userA.cookies);
-        assert.strictEqual(res.responseStatusCode, 200);
-        assert.ok(Array.isArray(res.responseBody), "Response must be an array of users");
-        assert.ok(res.responseBody.some(u => u.id === userA.id), "List must include test user A");
-        for (const user of res.responseBody) {
-            assert.strictEqual(user.passwordhash, undefined);
-            assert.strictEqual(user.email, undefined);
-        }
+        assert.strictEqual(res.responseStatusCode, 405);
     });
 
     // authorization: nobody may edit or delete someone else's account
     test("PUT /users/:id - updating another user returns 403", async () => {
         const res = await route(
-            { username: userB.username, email: userB.email, password: "Hacked12345!" },
+            { username: userB.username, email: userB.email, password: "Hacked12345!", current_password: PASSWORD },
             `/users/${userB.id}`,
             "PUT",
             userA.cookies
@@ -357,20 +367,49 @@ describe("User Endpoints", () => {
         assert.strictEqual(res.responseStatusCode, 403);
     });
 
-    test("PUT /users/:id - updating your own account returns 200", async () => {
+    test("PUT /users/:id - without current_password returns 400", async () => {
         const res = await route(
             { username: userA.username, email: userA.email, password: PASSWORD },
             `/users/${userA.id}`,
             "PUT",
             userA.cookies
         );
+        assert.strictEqual(res.responseStatusCode, 400);
+    });
+
+    test("PUT /users/:id - a wrong current_password returns 403 and changes nothing", async () => {
+        const res = await route(
+            { username: userA.username, email: userA.email, password: "NewPassword123!", current_password: "not-my-password" },
+            `/users/${userA.id}`,
+            "PUT",
+            userA.cookies
+        );
+        assert.strictEqual(res.responseStatusCode, 403);
+        const login = await route({ username: userA.username, password: PASSWORD }, "/auth/login", "POST", null);
+        assert.strictEqual(login.responseStatusCode, 200, "The old password must still work");
+    });
+
+    test("PUT /users/:id - updating your own account returns 200 and signs out every session", async () => {
+        const login = await route({ username: userA.username, password: PASSWORD }, "/auth/login", "POST", null);
+        const refreshToken = login.responseCookies.refreshToken;
+
+        const res = await route(
+            { username: userA.username, email: userA.email, password: PASSWORD, current_password: PASSWORD },
+            `/users/${userA.id}`,
+            "PUT",
+            userA.cookies
+        );
         assert.strictEqual(res.responseStatusCode, 200);
         assert.strictEqual(res.responseBody.id, userA.id);
+        assert.strictEqual(res.responseCookies?.refreshToken, "", "This browser's cookies must be cleared");
+
+        const refresh = await route(null, "/auth/refresh", "POST", { refreshToken });
+        assert.strictEqual(refresh.responseStatusCode, 401, "A session from before the change must no longer refresh");
     });
 
     test("PUT /users/:id - taking another user's username returns 409", async () => {
         const res = await route(
-            { username: userB.username, email: userA.email, password: PASSWORD },
+            { username: userB.username, email: userA.email, password: PASSWORD, current_password: PASSWORD },
             `/users/${userA.id}`,
             "PUT",
             userA.cookies
@@ -561,14 +600,28 @@ describe("Friendship Endpoints", () => {
     });
 });
 
+// makes two test users accepted friends through the real endpoints, because rooms may only contain friends
+async function makeFriends(sender, receiver) {
+    const request = await route({ receiver_id: receiver.id }, "/friendship", "POST", sender.cookies);
+    assert.strictEqual(request.responseStatusCode, 201, "Friend request must be created");
+    const accept = await route({ request_id: request.responseBody.id }, "/friendship/accept", "PUT", receiver.cookies);
+    assert.strictEqual(accept.responseStatusCode, 200, "Friend request must be accepted");
+}
+
 // tests room creation and retrieval endpoints
 describe("Room Endpoints", () => {
     let directRoomId = null;
 
+    // A and B are friends, C and B are friends, A and C are strangers
+    before(async () => {
+        await makeFriends(userA, userB);
+        await makeFriends(userC, userB);
+    });
+
     // tests creating a direct chat room, the creator is added automatically
     test("POST /rooms - creates a direct room and adds the creator as a member", async () => {
         const res = await route(
-            { room_type: "direct", name: "Test Direct Chat", users: [userB.id] },
+            { room_type: "direct", users: [userB.id] },
             "/rooms",
             "POST",
             userA.cookies
@@ -576,8 +629,37 @@ describe("Room Endpoints", () => {
         assert.strictEqual(res.responseStatusCode, 201);
         assert.ok(res.responseBody.id, "Created room must return its id");
         assert.deepStrictEqual([...res.responseBody.members].sort(), [userA.id, userB.id].sort());
+        assert.strictEqual(res.responseBody.name, userB.username, "The creator sees the direct room under the friend's name");
         directRoomId = res.responseBody.id;
         createdRoomIds.push(directRoomId);
+    });
+
+    test("POST /rooms - asking for the same direct room again returns the existing one with 200", async () => {
+        const fromB = await route({ room_type: "direct", users: [userA.id] }, "/rooms", "POST", userB.cookies);
+        assert.strictEqual(fromB.responseStatusCode, 200);
+        assert.strictEqual(fromB.responseBody.id, directRoomId, "Either person must land in the same direct room");
+        assert.strictEqual(fromB.responseBody.name, userA.username);
+    });
+
+    test("GET /rooms - each member sees a direct room under the other member's username", async () => {
+        const resA = await route(null, "/rooms", "GET", userA.cookies);
+        const resB = await route(null, "/rooms", "GET", userB.cookies);
+        assert.strictEqual(resA.responseBody.find((r) => r.id === directRoomId).name, userB.username);
+        assert.strictEqual(resB.responseBody.find((r) => r.id === directRoomId).name, userA.username);
+    });
+
+    test("POST /rooms - adding someone who is not your friend returns 403", async () => {
+        const group = await route({ room_type: "group", name: "Strangers", users: [userC.id] }, "/rooms", "POST", userA.cookies);
+        assert.strictEqual(group.responseStatusCode, 403);
+        const direct = await route({ room_type: "direct", users: [userC.id] }, "/rooms", "POST", userA.cookies);
+        assert.strictEqual(direct.responseStatusCode, 403);
+        const mixed = await route({ room_type: "group", name: "Half friends", users: [userB.id, userC.id] }, "/rooms", "POST", userA.cookies);
+        assert.strictEqual(mixed.responseStatusCode, 403, "One stranger in the list must reject the whole room");
+    });
+
+    test("POST /rooms - a group without a name returns 400", async () => {
+        const res = await route({ room_type: "group", users: [userB.id] }, "/rooms", "POST", userA.cookies);
+        assert.strictEqual(res.responseStatusCode, 400);
     });
 
     test("POST /rooms - direct room with more than two members returns 400", async () => {
@@ -595,14 +677,15 @@ describe("Room Endpoints", () => {
         assert.strictEqual(res.responseStatusCode, 400);
     });
 
-    test("POST /rooms - non-existent member returns 400", async () => {
+    // an id that does not exist is nobody's friend, so it is refused by the friends check
+    test("POST /rooms - non-existent member returns 403", async () => {
         const res = await route(
             { room_type: "group", name: "Ghost Room", users: [99999999] },
             "/rooms",
             "POST",
             userA.cookies
         );
-        assert.strictEqual(res.responseStatusCode, 400);
+        assert.strictEqual(res.responseStatusCode, 403);
     });
 
     test("POST /rooms - unknown room_type returns 400", async () => {

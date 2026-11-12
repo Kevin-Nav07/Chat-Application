@@ -2,7 +2,7 @@
 
 
 const { route } = require('./Router')
-const { parseJSON, parseCookies } = require("./helpers/Parsers")
+const { parseCookies, getClientIp } = require("./helpers/Parsers")
 const http = require('node:http');//importing http module from node
 const https = require('node:https');//importing https module for TLS encryption
 const fs = require('node:fs');//for file reading
@@ -10,7 +10,15 @@ const fs = require('node:fs');//for file reading
 
 
 const { setCookies } = require('./helpers/UserAuthenticator');
-const { handleCorsPreflight, applySecurityAndCorsHeaders, validateHostHeader } = require('./helpers/SecurityHeaders'); // helper functions for security headers, cors handling, and host validation
+const { handleCorsPreflight, applySecurityAndCorsHeaders, validateHostHeader, isAllowedOrigin } = require('./helpers/SecurityHeaders'); // helper functions for security headers, cors handling, host and origin validation
+
+// Ends a request early with a JSON error, used by the checks that run before routing
+function rejectRequest(req, res, statusCode, message) {
+    applySecurityAndCorsHeaders(req, res);
+    res.setHeader('Content-Type', 'application/json');
+    res.statusCode = statusCode;
+    res.end(JSON.stringify({ message }));
+}
 /*http server takes an optional Options object paramater and a RequestListener function
 of form: where request is the request object representative of an IncomingMEssage object, response is a ServerResponse object
 function(request,response):void {
@@ -58,6 +66,26 @@ function handleRequest(req, res) {
     }
     const method = req.method; // extract HTTP method directly from req
     const url = req.url; // extract URL path directly from req
+
+    // 1b. A request that changes something must come from our own frontend. Browsers attach the Origin header to these,
+    // so a page on another website trying to act with a visitor's cookies is refused here. Requests without an Origin
+    // (curl, server to server) carry no visitor cookies, so they are left to the normal token checks
+    const changesState = method === 'POST' || method === 'PUT' || method === 'DELETE';
+    if (changesState && req.headers.origin != null && !isAllowedOrigin(req.headers.origin)) {
+        rejectRequest(req, res, 403, "Requests from this origin are not allowed");
+        return;
+    }
+
+    // 1c. Bodies must be declared as JSON. A browser only sends a cross site request WITHOUT asking permission first
+    // when the type is something like text/plain, so requiring application/json closes that gap as well
+    const contentType = req.headers['content-type'] ?? '';
+    const declaresBody = Number(req.headers['content-length'] ?? 0) > 0 || req.headers['transfer-encoding'] != null;
+    if ((method === 'POST' || method === 'PUT') && declaresBody && !contentType.toLowerCase().startsWith('application/json')) {
+        rejectRequest(req, res, 415, "Request body must be JSON (Content-Type: application/json)");
+        return;
+    }
+
+    const clientIp = getClientIp(req); // the real client address, used by the router's per address rate limits
     const chunks = []; // raw byte chunks, joined once the body has fully arrived
     let bytesReceived = 0; // counter to track payload size
     res.on('error', (error) => {
@@ -99,7 +127,7 @@ function handleRequest(req, res) {
             // 4. Parse incoming cookies
             const cookies = parseCookies(req);
             // 5. Delegate to Router
-            const response = await route(parsedBody, url, method, cookies);
+            const response = await route(parsedBody, url, method, cookies, { clientIp });
             const responseStatusCode = response.responseStatusCode || 200;
             let responseBody = response.responseBody;
             const responseCookies = response.responseCookies;

@@ -12,14 +12,18 @@ function setRealtimePublisher(connector) {
 
 // Tells every member of a newly created room about it, so their open sockets join the room and their room list updates.
 // This is best effort: the room already exists in the database, so a Redis failure is logged instead of failing the request,
-// and the members still see the room the next time they load their rooms
-async function notifyRoomCreated(room, memberIds) {
+// and the members still see the room the next time they load their rooms.
+// nameByMember (optional) gives each member their own name for the room. Direct rooms need it, because each person
+// sees the room under the other person's username
+async function notifyRoomCreated(room, memberIds, nameByMember = null) {
     if (redisConnector == null) {
         return;
     }
-    const event = { type: "room:new", room };
     try {
-        await Promise.all(memberIds.map((memberId) => redisConnector.publishToUser(memberId, event)));
+        await Promise.all(memberIds.map((memberId) => {
+            const name = nameByMember?.[memberId] ?? room.name; // ?. means: only look inside when nameByMember is not null
+            return redisConnector.publishToUser(memberId, { type: "room:new", room: { ...room, name } });
+        }));
     } catch (error) {
         console.error("Failed to publish room:new event:", error);
     }

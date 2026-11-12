@@ -49,13 +49,26 @@ function parseCookies(request) {
     return cookies;
 }
 
+// How many proxies sit in front of this server and add themselves to X-Forwarded-For.
+// 0 (the default, used locally) means requests arrive straight from the browser and the header is ignored
+const TRUST_PROXY_HOPS = Number.parseInt(process.env.TRUST_PROXY_HOPS ?? "0", 10) || 0;
 
+// Works out the address of the real client, used as the key for per address rate limits.
+// On a hosting platform every request reaches Node from the platform's proxy, so socket.remoteAddress is the proxy.
+// The proxy appends the address it saw to X-Forwarded-For. A client can put anything it likes at the START of that
+// header, so only the entry written by our own proxy is trusted: the one TRUST_PROXY_HOPS places from the end
+function getClientIp(request) {
+    const socketAddress = request.socket?.remoteAddress ?? "unknown";
+    if (TRUST_PROXY_HOPS === 0) {
+        return socketAddress;
+    }
+    const header = request.headers["x-forwarded-for"];
+    if (typeof header !== "string" || header.trim() === "") {
+        return socketAddress; // no proxy header, for example a health check from inside the platform
+    }
+    const entries = header.split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+    // with one trusted proxy the last entry is the one it wrote; with fewer entries than hops, the first is the best guess
+    return entries[entries.length - TRUST_PROXY_HOPS] ?? entries[0] ?? socketAddress;
+}
 
-
-//takes in an incoming message object
-
-//have to break down the chunks of the message and return all of them
-
-
-
-module.exports = { parseJSON, parseUrl, parseCookies }
+module.exports = { parseJSON, parseUrl, parseCookies, getClientIp }

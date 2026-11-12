@@ -5,6 +5,7 @@ const { HttpError, errorToResponse } = require('./helpers/ErrorExtensions');
 const DbPool = require('./DbPool');
 const routeList = require('./Models/Routes');
 const APIResponseObj = require('./Models/APIResponseObj');
+const { limiters } = require('./helpers/RateLimiter');
 
 
 //we need a class or set of functions that take the server's route, and calls the apropriate handler/controller
@@ -44,9 +45,34 @@ function registerAllRoutes() {
 }
 
 
-//finds the route matching the url and method, checks the access token if the route needs one,
-//then hands the request to the route's controller with a database connection from the pool
-async function route(body, url, method, cookies) {
+//applies a route's rate limits of one kind ("ip" or "user") and returns a 429 response if any of them is used up.
+//every limit in the list is hit, even after one refuses, so a script that keeps retrying stays blocked for the full window
+function checkRateLimits(routeLimits, by, key) {
+    if (routeLimits == null || key == null) {
+        return null; // no limits on this route, or no key to count against
+    }
+    let allowed = true;
+    for (const rule of routeLimits) {
+        if (rule.by !== by) {
+            continue;
+        }
+        const limiter = limiters[rule.limiter];
+        if (limiter == null) {
+            throw new Error(`Route names unknown rate limiter ${rule.limiter}`); // a developer typo, fail loudly
+        }
+        // global limiters share one counter for everybody, the rest count per address or per user
+        if (!limiter.hit(rule.global ? "all" : `${by}:${key}`)) {
+            allowed = false;
+        }
+    }
+    return allowed ? null : { responseStatusCode: 429, responseBody: "Too many requests. Please wait a few minutes and try again." };
+}
+
+//finds the route matching the url and method, checks rate limits and the access token if the route needs one,
+//then hands the request to the route's controller with a database connection from the pool.
+//options.clientIp is the caller's address; the HTTP server always passes it. The API tests call route() directly
+//without one, which skips the per address limits only (there is no address to count against)
+async function route(body, url, method, cookies, options = {}) {
     let connection;
     try {
         const { pathName, searchParameters } = parseUrl(url);
@@ -68,6 +94,12 @@ async function route(body, url, method, cookies) {
             //we will let the actual specific controller do query paramater and body validation
             const pathParams = match.groups;//extraction of pathParamaters using our regex pattern
 
+            //per address limits run first, before any token or database work, so a flood is turned away cheaply
+            const ipLimited = checkRateLimits(route.rateLimits, "ip", options.clientIp);
+            if (ipLimited) {
+                return ipLimited;
+            }
+
             //check if we need an access token for this match
             const refreshToken = cookies?.refreshToken;
             let user_id;
@@ -80,6 +112,12 @@ async function route(body, url, method, cookies) {
                 if (user_id == null || !Number.isFinite(user_id)) {
                     throw new HttpError(401, "No user id attached to access token")
                 }
+            }
+
+            //per user limits need the user id from the token, so they run after it was verified
+            const userLimited = checkRateLimits(route.rateLimits, "user", user_id);
+            if (userLimited) {
+                return userLimited;
             }
 
             connection = await DbPool.provideClient();
