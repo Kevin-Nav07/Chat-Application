@@ -24,18 +24,29 @@ requestlistener function paramater will be a callback paramater, we can call cal
 function (req:IncomingMessage,res:ServerResponse){}
 */
 
-const httpsOptions = {
-    key: fs.readFileSync('certs/localhost+2-key.pem'),
-    cert: fs.readFileSync('certs/localhost+2.pem'),
+// Where the TLS certificate files live. They can be moved with TLS_KEY_PATH and TLS_CERT_PATH in .env
+const TLS_KEY_PATH = process.env.TLS_KEY_PATH || 'certs/localhost+2-key.pem';
+const TLS_CERT_PATH = process.env.TLS_CERT_PATH || 'certs/localhost+2.pem';
+
+// Locally the server runs https with the mkcert certificate, because the auth cookies are Secure.
+// Most hosting platforms handle https in front of the app and forward plain http to it, and the certs folder is
+// gitignored so it will not exist there. In that case the server starts as plain http instead of crashing on a missing file
+const useHttps = fs.existsSync(TLS_KEY_PATH) && fs.existsSync(TLS_CERT_PATH);
+
+const httpsOptions = useHttps ? {
+    key: fs.readFileSync(TLS_KEY_PATH),
+    cert: fs.readFileSync(TLS_CERT_PATH),
     // Enable all security features
     minVersion: 'TLSv1.2',
     // Recommended security settings
     secureOptions: require('constants').SSL_OP_NO_SSLv3 |
         require('constants').SSL_OP_NO_TLSv1 |
         require('constants').SSL_OP_NO_TLSv1_1
-};
+} : null;
 const MAX_BODY_SIZE = 1e6; // 1 Megabyte limit to protect memory from payload attacks
-const server = https.createServer(httpsOptions, function (req, res) {
+
+// Handles every HTTP request: validates the host, answers CORS preflights, reads the body, then hands it to the router
+function handleRequest(req, res) {
     // 0. Validate incoming Host header to defend against host header injection attacks
     if (!validateHostHeader(req, res)) {
         return; // terminates request lifecycle if host header is untrusted
@@ -47,7 +58,7 @@ const server = https.createServer(httpsOptions, function (req, res) {
     }
     const method = req.method; // extract HTTP method directly from req
     const url = req.url; // extract URL path directly from req
-    let body = ""; // string accumulator for stream chunks
+    const chunks = []; // raw byte chunks, joined once the body has fully arrived
     let bytesReceived = 0; // counter to track payload size
     res.on('error', (error) => {
         console.log("Error encountered with the response", error);
@@ -64,10 +75,11 @@ const server = https.createServer(httpsOptions, function (req, res) {
             req.destroy(); // destroy the request stream to stop incoming data
             return;
         }
-        body += chunk; // accumulate data chunks
+        chunks.push(chunk); // kept as bytes, because decoding each chunk separately breaks characters like emoji that are split across two chunks
     });
     req.on('end', async () => {
         try {
+            const body = Buffer.concat(chunks).toString('utf8'); // decodes the whole body at once so no character is split
             let parsedBody = null; // default to null for requests without a body
             // 3. Only parse JSON if body content exists and method supports bodies
             const hasBody = body.trim().length > 0;
@@ -116,12 +128,11 @@ const server = https.createServer(httpsOptions, function (req, res) {
     req.on('error', (error) => {
         console.log("Error encountered trying to read streamable data:\n" + error);
     });
-});
+}
 
-
-server.on("connection", () => {
-    console.log("Someone connected!!!")
-})
+// https when certificates are available, plain http otherwise (see useHttps above)
+const server = useHttps ? https.createServer(httpsOptions, handleRequest) : http.createServer(handleRequest);
+console.log(`Server will use ${useHttps ? "https" : "http (no certificates found)"}`);
 
 
 
