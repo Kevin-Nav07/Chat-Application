@@ -3,3 +3,5 @@ Planning.md
 node_modules/
 node_modules/.package-lock.json
 certs/
+# the frontend clone made by scripts/build-frontend.sh
+frontend/
