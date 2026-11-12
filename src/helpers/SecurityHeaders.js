@@ -1,13 +1,25 @@
-// List of origins allowed to access the API from a browser
-const ALLOWED_ORIGINS = [
+// Turns a comma separated environment variable such as "a.com, b.com" into a clean array, or null when it is not set
+function readListFromEnv(name) {
+    const raw = process.env[name];
+    if (raw == null || raw.trim() === '') {
+        return null;
+    }
+    return raw.split(',').map((item) => item.trim()).filter((item) => item.length > 0);
+}
+
+// Origins allowed to call the API from a browser.
+// In production set CORS_ORIGINS to the deployed frontend url, for example "https://ember.example.com".
+// Without it only the local Vite dev server is allowed, so development works with no extra setup
+const ALLOWED_ORIGINS = readListFromEnv('CORS_ORIGINS') ?? [
     'http://localhost:5173', // local development frontend url
     'https://localhost:5173' // secure local development frontend url
 ];
 
 const currentPort = process.env.PORT || '5043';
 
-// List of hostnames and ports permitted to reach this server to prevent host header injection
-const ALLOWED_HOSTS = [
+// Host header values this server answers to, which blocks host header injection.
+// In production set ALLOWED_HOSTS to the public domain the server is reached on, for example "api.ember.example.com"
+const ALLOWED_HOSTS = readListFromEnv('ALLOWED_HOSTS') ?? [
     `localhost:${currentPort}`, // dynamically resolved local development port from environment
     `127.0.0.1:${currentPort}`, // dynamically resolved loopback ip address with port
     'localhost:5043', // fallback local development port 5043
@@ -17,6 +29,13 @@ const ALLOWED_HOSTS = [
     '127.0.0.1:8443', // fallback loopback ip address with port 8443
     '127.0.0.1' // loopback ip address without port
 ];
+
+// True when a request's Origin header names one of our own frontends.
+// Browsers always send Origin on websocket handshakes and on cross site POST, PUT and DELETE requests, and a web page
+// cannot fake it, so checking it stops other websites from using a visitor's cookies against this server
+function isAllowedOrigin(origin) {
+    return typeof origin === 'string' && ALLOWED_ORIGINS.includes(origin);
+}
 
 // List of allowed HTTP verbs for cross-origin requests
 const ALLOWED_METHODS = 'GET, POST, PUT, DELETE, OPTIONS';
@@ -96,6 +115,7 @@ module.exports = {
     applyCorsHeaders,
     applySecurityAndCorsHeaders,
     handleCorsPreflight,
-    validateHostHeader
+    validateHostHeader,
+    isAllowedOrigin
 };
 

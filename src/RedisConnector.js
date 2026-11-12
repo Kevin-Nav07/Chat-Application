@@ -13,17 +13,20 @@ class RedisConnection {
     constructor() {
 
 
+        // The local certificate files are only attached when they exist. They are gitignored, so on a hosting
+        // platform they are missing, and reading them unconditionally crashed the server at startup
+        const socketOptions = { tls: true };
+        const keyPath = process.env.TLS_KEY_PATH || 'certs/localhost+2-key.pem';
+        const certPath = process.env.TLS_CERT_PATH || 'certs/localhost+2.pem';
+        if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
+            socketOptions.key = fs.readFileSync(keyPath);
+            socketOptions.cert = fs.readFileSync(certPath);
+        }
+
         this.redisClient = redis.createClient({
             url: process.env.REDIS_URL,
             RESP: 3,
-            socket: {
-
-                tls: true,
-                key: fs.readFileSync('certs/localhost+2-key.pem'),
-                cert: fs.readFileSync('certs/localhost+2.pem'),
-
-            },
-
+            socket: socketOptions,
         })
 
 
@@ -56,17 +59,29 @@ class RedisConnection {
     }
 
     async subscribe(room_id, callback) {//subscribe our server to the channel with room_id to listen to anything that comes through for that room
-        console.log("Subscribed");
         await this.#subscribeConnection.subscribe(`chat:room_${room_id}`, callback)
     }
 
     async publish(room_id, message, user_id) {
-        console.log("Published to:", room_id, "Where message sent was: ", message)
         await this.redisClient.publish(`chat:room_${room_id}`, JSON.stringify({ room_id, message, user_id }));
     }
 
     async unsubscribe(room_id) {
         await this.#subscribeConnection.unsubscribe(`chat:room_${room_id}`);
+    }
+
+    //each user also gets a personal channel. Events that are about a user rather than a room, such as
+    //"you were added to a new room", are published here so every server holding that user's sockets hears it
+    async subscribeUser(user_id, callback) {
+        await this.#subscribeConnection.subscribe(`chat:user_${user_id}`, callback);
+    }
+
+    async publishToUser(user_id, event) {
+        await this.redisClient.publish(`chat:user_${user_id}`, JSON.stringify(event));
+    }
+
+    async unsubscribeUser(user_id) {
+        await this.#subscribeConnection.unsubscribe(`chat:user_${user_id}`);
     }
 
 

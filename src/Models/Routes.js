@@ -6,7 +6,12 @@ const FriendshipController = require('../controllers/FriendshipController');
 
 //NOTE: the router uses the first route whose url and method both match, so more specific urls like /users/me
 //must come before generic ones like /users/:id that would also match them.
-//schema is always the NAME a schema was registered under in helpers/SchemaValidation.js, never the schema object itself
+//schema is always the NAME a schema was registered under in helpers/SchemaValidation.js, never the schema object itself.
+//rateLimits (optional) lists limiters from helpers/RateLimiter.js. by: "ip" counts per client address, by: "user" counts
+//per logged in user, and global: true shares one counter between everybody
+//
+//There is deliberately no GET /users route: listing every account handed anyone with a login the id of every user,
+//which made it trivial to spam them all. People are found by exact username instead (GET /users/name/:username)
 const routeList = [{
     method: "GET",
     url: "/users/me",
@@ -35,17 +40,8 @@ const routeList = [{
     schema: null,
     expectedPathTypes: { username: "string" },
     expectedSearchParamTypes: null,
-    tokenNeeded: false
-},
-{
-    method: "GET",
-    url: "/users",
-    controller: UserController,
-    handler: "getUsersAsync",
-    schema: null,
-    expectedPathTypes: null,
-    expectedSearchParamTypes: null,
-    tokenNeeded: true
+    tokenNeeded: false,//the signup form uses this to check a name is free before the person has an account
+    rateLimits: [{ limiter: "usernameLookupPerIp", by: "ip" }]
 },
 {
     method: "PUT",
@@ -55,7 +51,8 @@ const routeList = [{
     schema: "updateUserSchema",
     expectedPathTypes: { id: "number" },
     expectedSearchParamTypes: null,
-    tokenNeeded: true
+    tokenNeeded: true,
+    rateLimits: [{ limiter: "accountUpdatePerUser", by: "user" }]//this route checks the current password, so it is limited like login
 },
 {
     method: "POST",
@@ -65,7 +62,11 @@ const routeList = [{
     schema: "createUserSchema",
     expectedPathTypes: null,
     expectedSearchParamTypes: null,
-    tokenNeeded: false
+    tokenNeeded: false,
+    rateLimits: [
+        { limiter: "signupPerIp", by: "ip" },
+        { limiter: "signupGlobal", by: "ip", global: true }
+    ]
 },
 {
     method: "DELETE",
@@ -85,7 +86,8 @@ const routeList = [{
     schema: 'createRoomSchema',
     expectedPathTypes: null,
     expectedSearchParamTypes: null,
-    tokenNeeded: true
+    tokenNeeded: true,
+    rateLimits: [{ limiter: "roomCreatePerUser", by: "user" }]
 },
 {
     method: "GET",
@@ -109,6 +111,16 @@ const routeList = [{
 
 },
 {
+    method: "GET",
+    url: "/rooms/:id/messages",
+    controller: RoomController,
+    handler: "getRoomMessagesAsync",
+    schema: null,
+    expectedPathTypes: { id: "number" },
+    expectedSearchParamTypes: { cursor: "string", limit: "number" },
+    tokenNeeded: true
+},
+{
     method: "POST",
     url: "/auth/login",
     controller: AuthController,
@@ -116,7 +128,8 @@ const routeList = [{
     schema: "loginSchema",
     expectedPathTypes: null,
     expectedSearchParamTypes: null,
-    tokenNeeded: false
+    tokenNeeded: false,
+    rateLimits: [{ limiter: "loginPerIp", by: "ip" }]
 },
 {
     method: "POST",
@@ -126,7 +139,8 @@ const routeList = [{
     schema: null,
     expectedPathTypes: null,
     expectedSearchParamTypes: null,
-    tokenNeeded: false
+    tokenNeeded: false,
+    rateLimits: [{ limiter: "refreshPerIp", by: "ip" }]
 },
 {
     method: "POST",
@@ -146,7 +160,8 @@ const routeList = [{
     schema: "createFriendshipSchema",
     expectedPathTypes: null,
     expectedSearchParamTypes: null,
-    tokenNeeded: true
+    tokenNeeded: true,
+    rateLimits: [{ limiter: "friendRequestPerUser", by: "user" }]
 },
 {
     method: "GET",

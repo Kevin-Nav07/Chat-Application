@@ -2,7 +2,7 @@
 
 
 const { route } = require('./Router')
-const { parseJSON, parseCookies } = require("./helpers/Parsers")
+const { parseCookies, getClientIp } = require("./helpers/Parsers")
 const http = require('node:http');//importing http module from node
 const https = require('node:https');//importing https module for TLS encryption
 const fs = require('node:fs');//for file reading
@@ -10,7 +10,15 @@ const fs = require('node:fs');//for file reading
 
 
 const { setCookies } = require('./helpers/UserAuthenticator');
-const { handleCorsPreflight, applySecurityAndCorsHeaders, validateHostHeader } = require('./helpers/SecurityHeaders'); // helper functions for security headers, cors handling, and host validation
+const { handleCorsPreflight, applySecurityAndCorsHeaders, validateHostHeader, isAllowedOrigin } = require('./helpers/SecurityHeaders'); // helper functions for security headers, cors handling, host and origin validation
+
+// Ends a request early with a JSON error, used by the checks that run before routing
+function rejectRequest(req, res, statusCode, message) {
+    applySecurityAndCorsHeaders(req, res);
+    res.setHeader('Content-Type', 'application/json');
+    res.statusCode = statusCode;
+    res.end(JSON.stringify({ message }));
+}
 /*http server takes an optional Options object paramater and a RequestListener function
 of form: where request is the request object representative of an IncomingMEssage object, response is a ServerResponse object
 function(request,response):void {
@@ -24,18 +32,29 @@ requestlistener function paramater will be a callback paramater, we can call cal
 function (req:IncomingMessage,res:ServerResponse){}
 */
 
-const httpsOptions = {
-    key: fs.readFileSync('certs/localhost+2-key.pem'),
-    cert: fs.readFileSync('certs/localhost+2.pem'),
+// Where the TLS certificate files live. They can be moved with TLS_KEY_PATH and TLS_CERT_PATH in .env
+const TLS_KEY_PATH = process.env.TLS_KEY_PATH || 'certs/localhost+2-key.pem';
+const TLS_CERT_PATH = process.env.TLS_CERT_PATH || 'certs/localhost+2.pem';
+
+// Locally the server runs https with the mkcert certificate, because the auth cookies are Secure.
+// Most hosting platforms handle https in front of the app and forward plain http to it, and the certs folder is
+// gitignored so it will not exist there. In that case the server starts as plain http instead of crashing on a missing file
+const useHttps = fs.existsSync(TLS_KEY_PATH) && fs.existsSync(TLS_CERT_PATH);
+
+const httpsOptions = useHttps ? {
+    key: fs.readFileSync(TLS_KEY_PATH),
+    cert: fs.readFileSync(TLS_CERT_PATH),
     // Enable all security features
     minVersion: 'TLSv1.2',
     // Recommended security settings
     secureOptions: require('constants').SSL_OP_NO_SSLv3 |
         require('constants').SSL_OP_NO_TLSv1 |
         require('constants').SSL_OP_NO_TLSv1_1
-};
+} : null;
 const MAX_BODY_SIZE = 1e6; // 1 Megabyte limit to protect memory from payload attacks
-const server = https.createServer(httpsOptions, function (req, res) {
+
+// Handles every HTTP request: validates the host, answers CORS preflights, reads the body, then hands it to the router
+function handleRequest(req, res) {
     // 0. Validate incoming Host header to defend against host header injection attacks
     if (!validateHostHeader(req, res)) {
         return; // terminates request lifecycle if host header is untrusted
@@ -47,7 +66,27 @@ const server = https.createServer(httpsOptions, function (req, res) {
     }
     const method = req.method; // extract HTTP method directly from req
     const url = req.url; // extract URL path directly from req
-    let body = ""; // string accumulator for stream chunks
+
+    // 1b. A request that changes something must come from our own frontend. Browsers attach the Origin header to these,
+    // so a page on another website trying to act with a visitor's cookies is refused here. Requests without an Origin
+    // (curl, server to server) carry no visitor cookies, so they are left to the normal token checks
+    const changesState = method === 'POST' || method === 'PUT' || method === 'DELETE';
+    if (changesState && req.headers.origin != null && !isAllowedOrigin(req.headers.origin)) {
+        rejectRequest(req, res, 403, "Requests from this origin are not allowed");
+        return;
+    }
+
+    // 1c. Bodies must be declared as JSON. A browser only sends a cross site request WITHOUT asking permission first
+    // when the type is something like text/plain, so requiring application/json closes that gap as well
+    const contentType = req.headers['content-type'] ?? '';
+    const declaresBody = Number(req.headers['content-length'] ?? 0) > 0 || req.headers['transfer-encoding'] != null;
+    if ((method === 'POST' || method === 'PUT') && declaresBody && !contentType.toLowerCase().startsWith('application/json')) {
+        rejectRequest(req, res, 415, "Request body must be JSON (Content-Type: application/json)");
+        return;
+    }
+
+    const clientIp = getClientIp(req); // the real client address, used by the router's per address rate limits
+    const chunks = []; // raw byte chunks, joined once the body has fully arrived
     let bytesReceived = 0; // counter to track payload size
     res.on('error', (error) => {
         console.log("Error encountered with the response", error);
@@ -64,10 +103,11 @@ const server = https.createServer(httpsOptions, function (req, res) {
             req.destroy(); // destroy the request stream to stop incoming data
             return;
         }
-        body += chunk; // accumulate data chunks
+        chunks.push(chunk); // kept as bytes, because decoding each chunk separately breaks characters like emoji that are split across two chunks
     });
     req.on('end', async () => {
         try {
+            const body = Buffer.concat(chunks).toString('utf8'); // decodes the whole body at once so no character is split
             let parsedBody = null; // default to null for requests without a body
             // 3. Only parse JSON if body content exists and method supports bodies
             const hasBody = body.trim().length > 0;
@@ -87,7 +127,7 @@ const server = https.createServer(httpsOptions, function (req, res) {
             // 4. Parse incoming cookies
             const cookies = parseCookies(req);
             // 5. Delegate to Router
-            const response = await route(parsedBody, url, method, cookies);
+            const response = await route(parsedBody, url, method, cookies, { clientIp });
             const responseStatusCode = response.responseStatusCode || 200;
             let responseBody = response.responseBody;
             const responseCookies = response.responseCookies;
@@ -116,12 +156,11 @@ const server = https.createServer(httpsOptions, function (req, res) {
     req.on('error', (error) => {
         console.log("Error encountered trying to read streamable data:\n" + error);
     });
-});
+}
 
-
-server.on("connection", () => {
-    console.log("Someone connected!!!")
-})
+// https when certificates are available, plain http otherwise (see useHttps above)
+const server = useHttps ? https.createServer(httpsOptions, handleRequest) : http.createServer(handleRequest);
+console.log(`Server will use ${useHttps ? "https" : "http (no certificates found)"}`);
 
 
 
