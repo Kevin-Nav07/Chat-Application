@@ -65,12 +65,9 @@ function validatePathParamTypes(expectedParamTypes, actualParams) {
             }
             actualParams[key] = Number(actualParams[key])//convert value for the params
         }
-        else if (expectedParamTypes[key] === 'string') {//expected type is a string
-            if (isNumeric(actualParams[key]))//actual is a number
-            {
-                throw new Error("path parameter expected to be a string but was a number")
-            }
-        }
+        //a 'string' parameter accepts any text, including text made only of digits.
+        //it used to reject numeric looking values, which made a username like "123456" impossible to look up
+        //even though signup allows it. Routes that need a real number declare 'number' instead
     }
     return true
 }
@@ -100,13 +97,8 @@ function validateSearchParamTypes(expectedSearchParamTypes, actualSearchParams) 
             }
             searchParamObject[key] = Number(value);
         }
-        else if (expectedSearchParamTypes[key] === 'string') {//expected type is a string
-            if (isNumeric(value))//actual is a number
-            {
-                throw new Error("search parameter expected to be a string but was a number")
-            }
-            //expected type is a string, so we leave it and do nothing,Validation passes
-        }
+        //a 'string' search parameter is left as it is, digits included, for the same reason as path parameters above.
+        //each handler still checks the value itself, for example status must be pending, accepted or blocked
     }
     return searchParamObject //all the search paramaters we recieved are expected
 }

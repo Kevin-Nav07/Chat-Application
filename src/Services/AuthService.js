@@ -30,7 +30,11 @@ class AuthService {
                 throw new HttpError(401, "Invalid username or password"); // identical error message for failed password verification
             }
 
-            //correct password — create refresh token and access token using the retrieved user id
+            //expired refresh tokens can never be used again, so this user's old ones are removed on each login.
+            //without it the table only ever grows, because rows were deleted only on refresh and logout
+            await this.#_dbClient.query("DELETE FROM refresh_tokens WHERE user_id = $1 AND expiration < NOW()", [id]);
+
+            //correct password, so create the refresh token and access token using the retrieved user id
             const accessToken = await createJWT(id); // signs jwt payload containing user id
             const refreshToken = await this.#insertNewRefreshToken(id); // creates it in the database and returns the unhashed token
 

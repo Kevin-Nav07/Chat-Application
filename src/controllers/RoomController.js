@@ -4,9 +4,12 @@ const { HttpError, errorToResponse } = require('../helpers/ErrorExtensions');
 
 const RoomService = require('../Services/RoomService');
 const MessageService = require('../Services/MessageService');
+const { notifyRoomCreated } = require('../RealtimeNotifier');
 
 const DEFAULT_PAGE_SIZE = 20; // default page size for room listing
 const MAX_PAGE_SIZE = 50; // upper bound limit for room listing
+const ROOMS_CURSOR_KIND = "rooms"; // written into every rooms cursor so it cannot be replayed on the messages endpoint
+const MESSAGES_CURSOR_KIND = "messages"; // written into every messages cursor, together with the room it belongs to
 
 class RoomController {
     #_service; // RoomService instance for managing room creation and membership
@@ -21,6 +24,9 @@ class RoomController {
     async createRoomAsync(body, user_id) {
         try {
             const room = await this.#_service.createRoomAsync(body, user_id);
+            // the same shape GET /rooms returns, a brand new room has no messages yet
+            const { members, ...roomDetails } = room;
+            await notifyRoomCreated({ ...roomDetails, last_message: null }, members); // live sockets of every member join the room
             return { responseStatusCode: 201, responseBody: room };
         } catch (error) {
             console.log(error.message);
@@ -41,7 +47,7 @@ class RoomController {
 
     // GET /rooms/cursor?limit=&cursor=, one page of the user's rooms
     async getRoomsForUserAsync(searchParams, user_id) {
-        const expectedCursorParams = ["id", "created_at"];
+        const expectedCursorParams = ["kind", "id", "created_at"];
         try {
             const cursor = searchParams?.cursor;
             const limit = searchParams?.limit ?? DEFAULT_PAGE_SIZE;
@@ -55,13 +61,17 @@ class RoomController {
                 } catch (cursorError) {
                     throw new HttpError(400, cursorError.message);
                 }
+                // room and message cursors share a shape, so the kind field stops one being used on the other endpoint
+                if (cursorParams.kind !== ROOMS_CURSOR_KIND) {
+                    throw new HttpError(400, "Cursor does not belong to the rooms list");
+                }
             }
 
             const rows = await this.#_service.getRoomsPerUserAsync(user_id, cursorParams?.id, cursorParams?.created_at, limit);
 
             const lastRow = rows[rows.length - 1];
             const newCursor = rows.length === limit
-                ? encodeParamsIntoCursor({ id: lastRow.id, created_at: lastRow.cursor_created_at })
+                ? encodeParamsIntoCursor({ kind: ROOMS_CURSOR_KIND, id: lastRow.id, created_at: lastRow.cursor_created_at })
                 : null;
             const rooms = rows.map(({ cursor_created_at, ...room }) => room);
 
@@ -74,7 +84,7 @@ class RoomController {
 
     // GET /rooms/:id/messages?limit=&cursor=, retrieves paginated messages for a specific room
     async getRoomMessagesAsync(searchParams, user_id, pathParams) {
-        const expectedCursorParams = ["id", "created_at"];
+        const expectedCursorParams = ["kind", "room_id", "id", "created_at"];
         try {
             const roomId = pathParams?.id; // extracts room ID from URL path segment
             if (roomId == null) {
@@ -94,6 +104,10 @@ class RoomController {
                 } catch (cursorError) {
                     throw new HttpError(400, cursorError.message); // rejects malformed cursor
                 }
+                // a message cursor only works for the endpoint and room it was issued for
+                if (cursorParams.kind !== MESSAGES_CURSOR_KIND || cursorParams.room_id !== roomId) {
+                    throw new HttpError(400, "Cursor does not belong to this room's messages");
+                }
             }
 
             // Calls message service to query database with membership validation and user join
@@ -108,7 +122,7 @@ class RoomController {
             // Generates next cursor token if a full page was returned
             const lastRow = rows[rows.length - 1];
             const newCursor = rows.length === limit
-                ? encodeParamsIntoCursor({ id: lastRow.id, created_at: lastRow.cursor_created_at })
+                ? encodeParamsIntoCursor({ kind: MESSAGES_CURSOR_KIND, room_id: roomId, id: lastRow.id, created_at: lastRow.cursor_created_at })
                 : null;
 
             // Strips internal cursor timestamp from public response

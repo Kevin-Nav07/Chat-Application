@@ -52,15 +52,46 @@ class RoomService {
 
     }
 
-    //returns every room the given user is a member of
+    //returns every room the given user is a member of, each with its newest message as last_message (null for an empty room).
+    //rooms are ordered by latest activity: the newest message, or the creation time for a room with no messages,
+    //so the list order after a page reload matches the live reordering the frontend does when a message arrives
     async getRoomsAsync(user_id) {
         /*
-        a user is in a room if in the Room_members table, there is a row with user_id = id. So find all rows where user_id = id
-        once we find all the room_id's we retrieve all rows from room table that have those room id's
+        a user is in a room if in the Room_members table, there is a row with user_id = id.
+        LEFT JOIN LATERAL runs the inner query once per room, so it can pick that room's single newest message.
+        LEFT keeps rooms that have no messages yet, with null for last_message
         */
-        const results = await this.#_dbClient.query(`SELECT rooms.id, rooms.name, rooms.room_type, rooms.created_at FROM room_members JOIN rooms
-ON rooms.id = room_members.room_id WHERE room_members.user_id = $1 ORDER BY rooms.created_at DESC, rooms.id DESC`, [user_id]);
+        const results = await this.#_dbClient.query(`
+            SELECT rooms.id, rooms.name, rooms.room_type, rooms.created_at,
+                   CASE WHEN latest.id IS NULL THEN NULL ELSE json_build_object(
+                       'id', latest.id,
+                       'room_id', latest.room_id,
+                       'sender_id', latest.user_id,
+                       'sender_username', latest.sender_username,
+                       'content', latest.content,
+                       'message_type', latest.message_type,
+                       'created_at', latest.created_at
+                   ) END AS last_message
+            FROM room_members
+            JOIN rooms ON rooms.id = room_members.room_id
+            LEFT JOIN LATERAL (
+                SELECT messages.*, users.username AS sender_username
+                FROM messages
+                JOIN users ON users.id = messages.user_id
+                WHERE messages.room_id = rooms.id
+                ORDER BY messages.created_at DESC, messages.id DESC
+                LIMIT 1
+            ) latest ON true
+            WHERE room_members.user_id = $1
+            ORDER BY COALESCE(latest.created_at, rooms.created_at) DESC, rooms.id DESC`, [user_id]);
         return results.rows;
+    }
+
+    //returns only the ids of every room the user is in. The websocket server uses this on connect,
+    //because it only needs ids and the full rooms query above does extra work per room
+    async getRoomIdsForUserAsync(user_id) {
+        const results = await this.#_dbClient.query("SELECT room_id FROM room_members WHERE user_id = $1", [user_id]);
+        return results.rows.map((row) => row.room_id);
     }
 
     //cursor based pagination of a user's rooms, newest first. id and created_at come from the previous page's cursor.

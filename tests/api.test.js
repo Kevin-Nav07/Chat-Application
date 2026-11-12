@@ -10,6 +10,7 @@ const jwt = require('jsonwebtoken');
 const DbPool = require('../src/DbPool');
 const { route, registerAllRoutes } = require('../src/Router');
 const { createJWT, setCookies } = require('../src/helpers/UserAuthenticator');
+const MessageService = require('../src/Services/MessageService');
 
 // unique suffix for this test run to prevent collisions with existing database records
 const timestamp = Date.now();
@@ -314,9 +315,17 @@ describe("User Endpoints", () => {
         assert.strictEqual(res.responseBody.passwordhash, undefined);
     });
 
-    test("GET /users/name/:username - without a token returns 401", async () => {
+    // the signup form checks whether a username is free before the person has an account, so this route needs no token
+    test("GET /users/name/:username - works without a token and still hides the email", async () => {
         const res = await route(null, `/users/name/${userB.username}`, "GET", null);
-        assert.strictEqual(res.responseStatusCode, 401);
+        assert.strictEqual(res.responseStatusCode, 200);
+        assert.strictEqual(res.responseBody.email, undefined);
+    });
+
+    // digits are allowed in usernames, so an all digit name must be looked up like any other string
+    test("GET /users/name/:username - an all digit username is treated as a string, not rejected", async () => {
+        const res = await route(null, `/users/name/1234567890${timestamp}`, "GET", null);
+        assert.strictEqual(res.responseStatusCode, 404);
     });
 
     // tests 404 response for non-existent username search
@@ -661,5 +670,102 @@ describe("Room Endpoints", () => {
     test("GET /rooms/cursor - limit outside 1 to 50 returns 400", async () => {
         const res = await route(null, "/rooms/cursor?limit=0", "GET", userC.cookies);
         assert.strictEqual(res.responseStatusCode, 400);
+    });
+});
+
+// saves a message the same way the websocket server does, with its own pooled client, and returns the saved message
+async function saveMessage(roomId, userId, content) {
+    const client = await DbPool.provideClient();
+    try {
+        return await new MessageService(client).saveMessageAsync(roomId, userId, content);
+    } finally {
+        client.release();
+    }
+}
+
+// creates a group room owned by `owner` with the given members, records it for teardown and returns its id
+async function createGroupRoom(owner, memberIds, name) {
+    const res = await route({ room_type: "group", name, users: memberIds }, "/rooms", "POST", owner.cookies);
+    assert.strictEqual(res.responseStatusCode, 201);
+    createdRoomIds.push(res.responseBody.id);
+    return res.responseBody.id;
+}
+
+// tests saving messages and reading them back through the history endpoint
+describe("Message Endpoints", () => {
+    let chatRoomId = null; // A and B are members, C is not
+    let otherRoomId = null; // a second room for A, used for ordering and cursor checks
+    const savedIds = [];
+
+    before(async () => {
+        otherRoomId = await createGroupRoom(userA, [userB.id], "Message Test Older Room");
+        chatRoomId = await createGroupRoom(userA, [userB.id], "Message Test Chat Room");
+    });
+
+    test("saveMessageAsync - trims content and returns the sender's username", async () => {
+        const message = await saveMessage(chatRoomId, userA.id, "   first message   ");
+        assert.strictEqual(message.content, "first message");
+        assert.strictEqual(message.sender_id, userA.id);
+        assert.strictEqual(message.sender_username, userA.username);
+        savedIds.push(message.id);
+    });
+
+    test("saveMessageAsync - a non-member is rejected with 403", async () => {
+        await assert.rejects(() => saveMessage(chatRoomId, userC.id, "let me in"), (error) => error.statusCode === 403);
+    });
+
+    test("GET /rooms/:id/messages - pages newest first, every message exactly once, null cursor at the end", async () => {
+        for (let i = 2; i <= 5; i++) {
+            const message = await saveMessage(chatRoomId, i % 2 === 0 ? userB.id : userA.id, `message ${i}`);
+            savedIds.push(message.id);
+        }
+
+        const page1 = await route(null, `/rooms/${chatRoomId}/messages?limit=3`, "GET", userA.cookies);
+        assert.strictEqual(page1.responseStatusCode, 200);
+        assert.strictEqual(page1.responseBody.messages.length, 3);
+        assert.strictEqual(page1.responseBody.messages[0].content, "message 5", "Newest message must come first");
+        assert.strictEqual(page1.responseBody.messages[0].cursor_created_at, undefined, "Internal cursor column must not leak");
+        assert.ok(page1.responseBody.newCursor, "A full page must return a cursor");
+
+        const page2 = await route(null, `/rooms/${chatRoomId}/messages?limit=3&cursor=${page1.responseBody.newCursor}`, "GET", userB.cookies);
+        assert.strictEqual(page2.responseStatusCode, 200);
+        assert.strictEqual(page2.responseBody.messages.length, 2);
+        assert.strictEqual(page2.responseBody.newCursor, null, "Last page must return a null cursor");
+
+        const seen = [...page1.responseBody.messages, ...page2.responseBody.messages].map((m) => m.id);
+        assert.deepStrictEqual([...seen].sort((a, b) => a - b), [...savedIds].sort((a, b) => a - b));
+    });
+
+    test("GET /rooms/:id/messages - a non-member gets 403", async () => {
+        const res = await route(null, `/rooms/${chatRoomId}/messages`, "GET", userC.cookies);
+        assert.strictEqual(res.responseStatusCode, 403);
+    });
+
+    test("GET /rooms/:id/messages - a cursor from another room or from the rooms list is rejected", async () => {
+        const page = await route(null, `/rooms/${chatRoomId}/messages?limit=1`, "GET", userA.cookies);
+        const messageCursor = page.responseBody.newCursor;
+        const wrongRoom = await route(null, `/rooms/${otherRoomId}/messages?cursor=${messageCursor}`, "GET", userA.cookies);
+        assert.strictEqual(wrongRoom.responseStatusCode, 400);
+        const onRoomsList = await route(null, `/rooms/cursor?cursor=${messageCursor}`, "GET", userA.cookies);
+        assert.strictEqual(onRoomsList.responseStatusCode, 400);
+    });
+
+    test("GET /rooms - includes last_message and orders rooms by latest activity", async () => {
+        // the older room was created first, so a new message in it must move it above the newer, quieter room
+        const latest = await saveMessage(otherRoomId, userB.id, "bump the older room");
+        const res = await route(null, "/rooms", "GET", userA.cookies);
+        assert.strictEqual(res.responseStatusCode, 200);
+        const ids = res.responseBody.map((room) => room.id);
+        assert.ok(ids.indexOf(otherRoomId) < ids.indexOf(chatRoomId), "The room with the newest message must come first");
+        const older = res.responseBody.find((room) => room.id === otherRoomId);
+        assert.strictEqual(older.last_message.id, latest.id);
+        assert.strictEqual(older.last_message.sender_username, userB.username);
+    });
+
+    test("GET /rooms - a room without messages has last_message null", async () => {
+        const emptyRoomId = await createGroupRoom(userA, [userB.id], "Message Test Empty Room");
+        const res = await route(null, "/rooms", "GET", userA.cookies);
+        const empty = res.responseBody.find((room) => room.id === emptyRoomId);
+        assert.strictEqual(empty.last_message, null);
     });
 });

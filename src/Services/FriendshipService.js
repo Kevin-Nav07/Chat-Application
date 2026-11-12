@@ -1,7 +1,7 @@
 // imports the UserService class to look up and verify users in the database
 const UserService = require('./UserService');
 // imports the HttpError class so business rule failures carry the right status code back to the controller
-const { HttpError } = require('../helpers/ErrorExtensions');
+const { HttpError, PG_UNIQUE_VIOLATION } = require('../helpers/ErrorExtensions');
 
 class FriendshipService {
     // private field storing the active postgres client connection passed from the pool
@@ -35,6 +35,14 @@ class FriendshipService {
             // starts a database transaction to ensure atomicity
             await this.#_dbClient.query("BEGIN");
 
+            // locks this pair of users until the transaction ends. Without it, A sending to B and B sending to A at the
+            // same moment could both pass the "already exists" check below and create two rows.
+            // the smaller id always goes first so both directions ask for the same lock
+            await this.#_dbClient.query(
+                "SELECT pg_advisory_xact_lock(LEAST($1::int, $2::int), GREATEST($1::int, $2::int))",
+                [sender_id, receiver_id]
+            );
+
             // looks for any existing request between the two users in either direction, because the table has no
             // unique constraint on the pair. If B already sent A a request, A should accept that one instead of sending a new one
             const existing = await this.#_dbClient.query(
@@ -64,6 +72,10 @@ class FriendshipService {
         catch (error) {
             // rolls back any changes made during the transaction if an error occurs
             await this.#_dbClient.query("ROLLBACK");
+            // the unique_friendship constraint is a last line of defence; it means the request already exists, which is a 409 not a 500
+            if (error.code === PG_UNIQUE_VIOLATION) {
+                throw new HttpError(409, "A friendship between these users already exists");
+            }
             // rethrows the error for the controller to catch and return proper status code
             throw error;
         }

@@ -14,6 +14,7 @@ const { registerAllRoutes } = require("./Router");
 
 const { server } = require("./server");
 const createWebsocketServer = require("./WebsocketServer")
+const { setRealtimePublisher } = require("./RealtimeNotifier");
 
 
 
@@ -26,6 +27,7 @@ async function main() {
     //redis connection setup
     const redisConnection = new RedisConnection();
     await redisConnection.connectClient();//waits so websocket clients cannot connect before redis pub/sub is ready
+    setRealtimePublisher(redisConnection);//lets HTTP controllers announce events such as a new room to live sockets
 
     createWebsocketServer(server, DbPool, redisConnection);
     console.log("Server is actively listening for connections");

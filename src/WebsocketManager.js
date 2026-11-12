@@ -1,176 +1,161 @@
-// Maps user IDs and room IDs to active WebSocket connections and handles pub/sub routing
+// Keeps track of which open sockets belong to which rooms and users on this server, and routes Redis pub/sub
+// traffic to them. Every server instance has its own manager; Redis is what connects the instances together.
+//
+// Three maps, all kept in sync:
+//   roomConnections:  room_id -> Set of sockets on this server that are in that room (used to deliver messages)
+//   userConnections:  user_id -> Set of that user's open sockets on this server (used for per-user events like room:new)
+//   connectionRooms:  socket  -> Set of room_ids that socket joined (used to clean up exactly that socket on close)
+// Tracking rooms per socket, instead of per user, means closing one tab never removes another tab's rooms.
 const { WebSocket } = require('ws');
-// const { unpack, pack } = require('msgpackr'); // msgpack commented out in favor of JSON-only messaging
 
 class WebsocketManager {
-    #roomMap; // stores room_id -> Set of active WebSocket connections
-    #userMap; // stores user_id -> Set of room_ids for that user
-    #redisConnector; // handles cross-server pub/sub message broadcasting
+    #roomConnections; // room_id -> Set<WebSocket>
+    #userConnections; // user_id -> Set<WebSocket>
+    #connectionRooms; // WebSocket -> Set<room_id>, a socket is "registered" while it has an entry here
+    #redisConnector; // handles cross-server pub/sub
 
     constructor(redisConnector) {
-        this.#roomMap = new Map(); // initializes map of active room connections
-        this.#userMap = new Map(); // initializes map of user room memberships
-        this.#redisConnector = redisConnector; // stores redis connector instance
+        this.#roomConnections = new Map();
+        this.#userConnections = new Map();
+        this.#connectionRooms = new Map();
+        this.#redisConnector = redisConnector;
     }
 
-    // Registers a list of rooms for a specific user ID
-    addRoomsToUser(rooms, user_id) {
-        if (rooms == null || user_id == null) {
-            throw new Error("Could not add rooms to user: invalid parameters"); // ensures valid inputs
+    // Records a newly opened socket. It must be called synchronously as soon as the socket connects, before any await,
+    // so that a socket which closes while its rooms are still loading is always removed by removeConnection.
+    // The first socket of a user on this server also subscribes this server to that user's personal Redis channel
+    async registerConnection(connection) {
+        const user_id = connection.user_id;
+        this.#connectionRooms.set(connection, new Set()); // no rooms joined yet, they are added once loaded from the database
+
+        let userSockets = this.#userConnections.get(user_id);
+        const isFirstSocketForUser = userSockets == null;
+        if (isFirstSocketForUser) {
+            userSockets = new Set();
+            this.#userConnections.set(user_id, userSockets);
         }
-        if (!this.#userMap.has(user_id)) {
-            this.#userMap.set(user_id, new Set()); // initializes set if this is the first connection for the user
-        }
-        const roomSet = this.#userMap.get(user_id); // retrieves active room set
-        for (const room of rooms) {
-            roomSet.add(room?.id); // set automatically ignores duplicate IDs
+        userSockets.add(connection);
+
+        if (isFirstSocketForUser) {
+            await this.#redisConnector.subscribeUser(user_id, (data) => this.#handleUserEvent(user_id, data));
         }
     }
 
-    // Associates an active WebSocket connection with all of a user's rooms
-    async addConnectionToRooms(rooms, connection) {
-        if (rooms == null || connection == null) {
-            throw new Error("Error adding connection to rooms: parameter error"); // validates arguments
-        }
-        for (const room of rooms) {
-            await this.addConnectionToRoom(room.id, connection); // binds connection to each individual room
-        }
-        await this.#redisConnector.display(); // logs current pub/sub state for debugging
+    // True while the socket is open and has not been cleaned up yet
+    isRegistered(connection) {
+        return this.#connectionRooms.has(connection);
     }
 
-    // Associates an active connection with a specific room and ensures Redis subscription
-    async addConnectionToRoom(room_id, connection) {
-        if (room_id != null && Number.isFinite(room_id) && connection instanceof WebSocket) {
-            if (this.#roomMap.has(room_id)) {
-                this.#roomMap.get(room_id).add(connection); // adds connection pointer to existing room set
-            } else {
-                this.#roomMap.set(room_id, new Set([connection])); // creates new room set with this connection
-                // Subscribes server to Redis channel so messages from other instances reach this room
-                await this.#redisConnector.subscribe(room_id, async (data) => {
-                    const parsedMessage = JSON.parse(data); // deserializes Redis message payload
-                    const message = parsedMessage?.message; // extracts message content or object
-                    const targetRoomId = parsedMessage?.room_id; // extracts target room ID
-                    const senderUserId = parsedMessage?.user_id; // extracts sender user ID
-                    console.log("Received message from Redis subscription:", message, targetRoomId);
-                    await this.fromRedisTransmitMessage(targetRoomId, message, senderUserId); // delivers to local clients
-                });
+    // Adds one socket to one room. The first socket in a room on this server subscribes the server to that room's Redis channel.
+    // Does nothing for a socket that already closed, which is what prevents dead sockets being added after a slow database call
+    async joinRoom(connection, room_id) {
+        if (!Number.isInteger(room_id) || !this.isRegistered(connection)) {
+            return;
+        }
+        const joinedRooms = this.#connectionRooms.get(connection);
+        if (joinedRooms.has(room_id)) {
+            return; // already in this room, joining twice would be harmless but wasteful
+        }
+        joinedRooms.add(room_id);
+
+        const sockets = this.#roomConnections.get(room_id);
+        if (sockets != null) {
+            sockets.add(connection);
+            return;
+        }
+        // the map entry is created before the await, so a second socket joining at the same moment sees it and does not subscribe twice
+        this.#roomConnections.set(room_id, new Set([connection]));
+        await this.#redisConnector.subscribe(room_id, (data) => this.#handleRoomMessage(data));
+    }
+
+    // Adds a socket to several rooms, used once when a socket connects
+    async joinRooms(connection, roomIds) {
+        for (const room_id of roomIds) {
+            await this.joinRoom(connection, room_id);
+        }
+    }
+
+    // Removes a closed socket from every room and user it was part of, and unsubscribes from channels nobody here needs any more.
+    // Safe to call more than once, because both the 'error' and 'close' events call it
+    async removeConnection(connection) {
+        const joinedRooms = this.#connectionRooms.get(connection);
+        if (joinedRooms == null) {
+            return; // already removed
+        }
+        this.#connectionRooms.delete(connection); // from here on isRegistered is false, so pending joins for this socket are skipped
+
+        for (const room_id of joinedRooms) {
+            const sockets = this.#roomConnections.get(room_id);
+            if (sockets == null) {
+                continue;
             }
-        } else {
-            throw new Error("Room_id or connection are not valid inputs"); // guards against improper types
-        }
-    }
-
-    // Removes a single WebSocket connection from a room
-    async deleteConnectionInRoom(room_id, connection) {
-        if (room_id != null && Number.isFinite(room_id) && connection instanceof WebSocket) {
-            if (this.#roomMap.has(room_id)) {
-                this.#roomMap.get(room_id).delete(connection); // removes connection reference from set
+            sockets.delete(connection);
+            if (sockets.size === 0) {
+                this.#roomConnections.delete(room_id);
+                await this.#redisConnector.unsubscribe(room_id); // no socket on this server is in the room any more
             }
-        } else {
-            throw new Error("Room_id or connection are not valid inputs"); // validates arguments
+        }
+
+        const user_id = connection.user_id;
+        const userSockets = this.#userConnections.get(user_id);
+        if (userSockets != null) {
+            userSockets.delete(connection);
+            if (userSockets.size === 0) {
+                this.#userConnections.delete(user_id);
+                await this.#redisConnector.unsubscribeUser(user_id); // the user has no open tabs on this server
+            }
         }
     }
 
-    // Cleans up a closing connection without wiping the user room list if other tabs remain open
-    async deleteUser(user_id, connection) {
-        if (!user_id || !this.#userMap.has(user_id)) {
-            return false; // nothing to delete if user is not in map
-        }
+    // Publishes a confirmed message to Redis so every server, including this one, delivers it to the room
+    async publishRoomMessage(room_id, payload, sender_id) {
+        await this.#redisConnector.publish(room_id, payload, sender_id);
+    }
 
-        const userRooms = this.#userMap.get(user_id); // retrieves all rooms the user belongs to
-        if (userRooms) {
-            for (const room_id of userRooms) {
-                await this.deleteConnectionInRoom(room_id, connection); // removes the closing connection
-                // If no active connections remain in this room on this server, unsubscribe from Redis
-                const roomConnections = this.#roomMap.get(room_id); // checks remaining connections
-                if (roomConnections && roomConnections.size === 0) {
-                    this.#roomMap.delete(room_id); // drops room from local memory
-                    await this.#redisConnector.unsubscribe(room_id); // stops receiving Redis messages for this room
+    // Runs when Redis delivers a room message to this server: sends it to every open socket here that is in the room,
+    // including the sender's own sockets, because that is how the sender learns the message was saved
+    #handleRoomMessage(data) {
+        let parsed;
+        try {
+            parsed = JSON.parse(data);
+        } catch (error) {
+            console.error("Ignoring malformed room message from Redis:", error);
+            return; // a thrown error here would be an unhandled rejection inside the Redis client, so it is caught and logged
+        }
+        const sockets = this.#roomConnections.get(parsed?.room_id);
+        if (sockets == null || parsed?.message == null) {
+            return;
+        }
+        const text = JSON.stringify(parsed.message); // serialised once, not once per socket
+        for (const socket of sockets) {
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(text);
+            }
+        }
+    }
+
+    // Runs when Redis delivers an event on a user's personal channel to this server.
+    // For room:new, every open socket of that user here joins the room first, then is told about it,
+    // so a message sent right after the client hears room:new is already delivered to it
+    async #handleUserEvent(user_id, data) {
+        try {
+            const event = JSON.parse(data);
+            if (event?.type !== "room:new" || !Number.isInteger(event.room?.id)) {
+                return;
+            }
+            const sockets = this.#userConnections.get(user_id);
+            if (sockets == null) {
+                return;
+            }
+            const text = JSON.stringify(event);
+            for (const socket of [...sockets]) { // copied because removeConnection may change the set while we await
+                await this.joinRoom(socket, event.room.id);
+                if (socket.readyState === WebSocket.OPEN) {
+                    socket.send(text);
                 }
             }
-        }
-
-        // Checks whether the user still has other active connections in any room on this server
-        let hasOtherConnections = false; // flag to determine if user is still active in another tab
-        for (const connections of this.#roomMap.values()) {
-            for (const con of connections) {
-                if (con.user_id === user_id) {
-                    hasOtherConnections = true; // another connection still exists for this user
-                    break;
-                }
-            }
-            if (hasOtherConnections) break;
-        }
-
-        // Only remove user from userMap if no other active connections exist for them
-        if (!hasOtherConnections) {
-            return this.#userMap.delete(user_id); // cleans up user record completely
-        }
-        return false; // preserves user room memberships for remaining connections
-    }
-
-    // Transmits a message to Redis so it fans out to all server instances
-    async transmitMessageToRedis(room_id, message, wsConnection) {
-        if (room_id != null && Number.isFinite(room_id) && message != null && wsConnection instanceof WebSocket) {
-            if (this.checkUserRoomMembership(wsConnection.user_id, room_id)) {
-                await this.#redisConnector.publish(room_id, message, wsConnection?.user_id); // publishes to Redis
-            } else {
-                throw new Error("User cannot send to that room"); // rejects unauthorized senders
-            }
-        } else {
-            throw new Error("Room_id or connection are not valid inputs"); // validates arguments
-        }
-    }
-
-    // Delivers a broadcast message received from Redis to all local connections in the room
-    async fromRedisTransmitMessage(room_id, message, senderUserId) {
-        if (room_id != null && Number.isFinite(room_id) && message != null) {
-            if (this.#roomMap.has(room_id)) {
-                // Delivers to all active connections in the room, including the sender for confirmation
-                for (const con of this.#roomMap.get(room_id).keys()) {
-                    if (con != null && con instanceof WebSocket && con.readyState === WebSocket.OPEN) {
-                        this.sendMessage(con, room_id, message); // sends payload directly over socket stream
-                    }
-                }
-                console.log("Delivered message from Redis to room connections:", room_id);
-            }
-        } else {
-            throw new Error("Room_id or message are not valid inputs"); // validates arguments
-        }
-    }
-
-    // Checks whether a given user is enrolled in a specific room
-    checkUserRoomMembership(user_id, room_id) {
-        return this.#userMap.get(user_id)?.has(room_id) ?? false; // returns true if membership exists
-    }
-
-    // Serializes and transmits data to a single WebSocket client
-    sendMessage(connection, room_id, messageContent) {
-        if (room_id != null && Number.isFinite(room_id) && messageContent != null && connection instanceof WebSocket) {
-            // If the message is already a structured protocol object, serialize it directly
-            let data;
-            if (typeof messageContent === 'object' && messageContent !== null) {
-                data = messageContent; // keeps protocol structure like { type: "message:new", message: {...} }
-            } else {
-                data = { room_id: room_id, message: messageContent }; // fallback legacy structure
-            }
-            connection.send(JSON.stringify(data)); // sends text frame over WebSocket
-        } else {
-            console.log(`Could not send message to room ${room_id}`); // logs transmission failure
-        }
-    }
-
-    // Diagnostic method to display active connection status
-    display() {
-        console.log("Room map size:", this.#roomMap.size);
-        for (const [roomId, connections] of this.#roomMap) {
-            const userIds = Array.from(connections, (conn) => conn?.user_id).join(', ');
-            console.log(`roomID: ${roomId} | ws id's: [ ${userIds} ]`);
-        }
-        console.log("USER MAP size:", this.#userMap.size);
-        for (const [userId, roomIds] of this.#userMap) {
-            const rooms = Array.from(roomIds).join(', ');
-            console.log(`userId: ${userId} | roomIds: [ ${rooms} ]`);
+        } catch (error) {
+            console.error("Failed to handle user event from Redis:", error);
         }
     }
 }
