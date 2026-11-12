@@ -4,7 +4,9 @@ const { verifyJWT } = require('./helpers/UserAuthenticator');
 const { parseCookies } = require('./helpers/Parsers');
 const APIResponseObj = require('./Models/APIResponseObj');
 const ServiceContext = require('./ServiceContext');
-const { isAllowedOrigin } = require('./helpers/SecurityHeaders');
+const { isAllowedOrigin, isAllowedHost } = require('./helpers/SecurityHeaders');
+
+const WEBSOCKET_PATH = '/ws'; // the one address the chat socket lives at; the frontend builds wss://<host>/ws
 const { limiters } = require('./helpers/RateLimiter');
 
 const MAX_CONTENT_LENGTH = 4000; // longest message, in characters, after trimming
@@ -52,6 +54,16 @@ function createWebSocketServer(server, DbPool, redisConnector) {
     // then upgrades the connection only if both are fine and the user is not over their connection limits
     server.on('upgrade', async function upgrade(request, socket, head) {
         try {
+            // Only one address accepts sockets, so an upgrade attempt on any other path is not ours to answer
+            if (new URL(request.url, 'http://placeholder').pathname !== WEBSOCKET_PATH) {
+                rejectUpgrade(socket, 404, "Not Found", "No websocket at this address");
+                return;
+            }
+            // The same Host check normal HTTP requests get in server.js
+            if (!isAllowedHost(request.headers.host)) {
+                rejectUpgrade(socket, 400, "Bad Request", "Invalid or unauthorized Host header");
+                return;
+            }
             // A browser always sends Origin on a websocket handshake. Checking it stops another website from opening
             // a socket with a visitor's cookies and reading their messages (cross site websocket hijacking)
             if (!isAllowedOrigin(request.headers.origin)) {

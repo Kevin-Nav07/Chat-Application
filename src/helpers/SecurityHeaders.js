@@ -7,15 +7,16 @@ function readListFromEnv(name) {
     return raw.split(',').map((item) => item.trim()).filter((item) => item.length > 0);
 }
 
+const currentPort = process.env.PORT || '5043';
+
 // Origins allowed to call the API from a browser.
-// In production set CORS_ORIGINS to the deployed frontend url, for example "https://ember.example.com".
-// Without it only the local Vite dev server is allowed, so development works with no extra setup
+// In production set CORS_ORIGINS to the deployed site, for example "https://ember.onrender.com".
+// Without it the local Vite dev server and this server's own local address are allowed, so development works with no extra setup
 const ALLOWED_ORIGINS = readListFromEnv('CORS_ORIGINS') ?? [
     'http://localhost:5173', // local development frontend url
-    'https://localhost:5173' // secure local development frontend url
+    'https://localhost:5173', // secure local development frontend url
+    `https://localhost:${currentPort}` // this server itself, when it serves the built frontend locally
 ];
-
-const currentPort = process.env.PORT || '5043';
 
 // Host header values this server answers to, which blocks host header injection.
 // In production set ALLOWED_HOSTS to the public domain the server is reached on, for example "api.ember.example.com"
@@ -43,13 +44,42 @@ const ALLOWED_METHODS = 'GET, POST, PUT, DELETE, OPTIONS';
 // List of allowed headers the frontend may send in requests
 const ALLOWED_HEADERS = 'Content-Type, Authorization';
 
-// Applies general security headers to the outgoing response to protect against common web vulnerabilities
-function applySecurityHeaders(res) {
+// True when a Host header names this server. Exported so the websocket upgrade can run the same check as HTTP requests
+function isAllowedHost(host) {
+    return typeof host === 'string' && ALLOWED_HOSTS.includes(host);
+}
+
+// The policy for API (JSON) responses and plain files: JSON never needs to load anything, so nothing is allowed
+const API_CONTENT_SECURITY_POLICY = "default-src 'none'; frame-ancestors 'none'";
+
+// The policy for the HTML page itself. Every directive lists exactly what the React app needs and nothing more:
+// its own scripts and styles, Google Fonts (a stylesheet from fonts.googleapis.com, font files from fonts.gstatic.com),
+// a data: image the fire's CSS embeds, and requests to this server's API and websocket.
+// script-src has no 'unsafe-inline', so even if someone injected a <script> tag into the page the browser would not run it.
+// host has already passed the Host check (validateHostHeader) before this runs, so it is safe to write into the header
+function buildPageContentSecurityPolicy(host) {
+    return [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' https://fonts.googleapis.com",
+        "font-src https://fonts.gstatic.com",
+        "img-src 'self' data:",
+        `connect-src 'self' wss://${host}`, // 'self' covers fetch to /api; the wss:// entry is the websocket, which older browsers do not count as 'self'
+        "object-src 'none'",
+        "base-uri 'self'",
+        "frame-ancestors 'none'",
+        "form-action 'self'",
+    ].join('; ');
+}
+
+// Applies general security headers to the outgoing response to protect against common web vulnerabilities.
+// contentSecurityPolicy defaults to the strict API policy; the static file server passes the page policy for HTML
+function applySecurityHeaders(res, contentSecurityPolicy = API_CONTENT_SECURITY_POLICY) {
     res.setHeader('X-Content-Type-Options', 'nosniff'); // instructs the browser not to guess or sniff the MIME type of the response
     res.setHeader('X-Frame-Options', 'DENY'); // prevents the page from being rendered inside an iframe, protecting against clickjacking
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains'); // enforces https connections for all future requests within one year
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin'); // limits referrer details sent to external domains to protect private path data
-    res.setHeader('Content-Security-Policy', "default-src 'self'"); // restricts resources to load only from the same origin
+    res.setHeader('Content-Security-Policy', contentSecurityPolicy); // limits where the browser may load anything from, see the policies above
 }
 
 // Checks if the incoming request origin is allowed and applies cross-origin resource sharing headers
@@ -99,7 +129,7 @@ function validateHostHeader(req, res) {
     const host = req.headers.host; // reads the host header sent by the client
 
     // Check if host header exists and is contained within our allowed hosts list
-    if (!host || !ALLOWED_HOSTS.includes(host)) {
+    if (!isAllowedHost(host)) {
         applySecurityAndCorsHeaders(req, res); // attach security and cors headers to allow the browser to display the 400 error
         res.setHeader('Content-Type', 'application/json'); // specify json error response format
         res.statusCode = 400; // 400 Bad Request indicates an untrusted or invalid host
@@ -116,6 +146,8 @@ module.exports = {
     applySecurityAndCorsHeaders,
     handleCorsPreflight,
     validateHostHeader,
-    isAllowedOrigin
+    isAllowedOrigin,
+    isAllowedHost,
+    buildPageContentSecurityPolicy
 };
 

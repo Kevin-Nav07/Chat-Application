@@ -11,6 +11,16 @@ const fs = require('node:fs');//for file reading
 
 const { setCookies } = require('./helpers/UserAuthenticator');
 const { handleCorsPreflight, applySecurityAndCorsHeaders, validateHostHeader, isAllowedOrigin } = require('./helpers/SecurityHeaders'); // helper functions for security headers, cors handling, host and origin validation
+const { createFrontendHandler } = require('./StaticFiles');
+
+// Every API address starts with this. The prefix keeps API paths apart from the React app's own page addresses,
+// which would otherwise clash: /auth/login is both a page (GET, in the browser) and an API route (POST)
+const API_PREFIX = '/api';
+
+// Serves the built React app when FRONTEND_DIST_PATH points at its dist folder, or is null when it does not
+// (in development Vite serves the frontend itself, so the backend only answers the API)
+const serveFrontend = createFrontendHandler(process.env.FRONTEND_DIST_PATH);
+console.log(serveFrontend ? `Serving the frontend from ${process.env.FRONTEND_DIST_PATH}` : "Frontend not served by this server (API only)");
 
 // Ends a request early with a JSON error, used by the checks that run before routing
 function rejectRequest(req, res, statusCode, message) {
@@ -53,19 +63,54 @@ const httpsOptions = useHttps ? {
 } : null;
 const MAX_BODY_SIZE = 1e6; // 1 Megabyte limit to protect memory from payload attacks
 
-// Handles every HTTP request: validates the host, answers CORS preflights, reads the body, then hands it to the router
+// The first stop for every HTTP request. It decides which lane the request belongs to:
+//   /healthz       a tiny "I am alive" answer for Render's health checks
+//   /api/...       the JSON API, handled by handleApiRequest and the router
+//   anything else  a file from the built React app (or index.html for page addresses like /dashboard)
 function handleRequest(req, res) {
+    // Health check first, even before the Host check: Render's checker may call the app by an internal address instead of
+    // the public hostname. It is safe to answer early because it reveals nothing and touches no database
+    if (req.url === '/healthz') {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store'); // a cached "ok" would hide a server that has since died
+        res.end('ok');
+        return;
+    }
+
     // 0. Validate incoming Host header to defend against host header injection attacks
     if (!validateHostHeader(req, res)) {
         return; // terminates request lifecycle if host header is untrusted
     }
 
+    const pathOnly = req.url.split('?')[0]; // the path without any ?query part, used only to choose the lane
+    if (pathOnly === API_PREFIX || pathOnly.startsWith(API_PREFIX + '/')) {
+        // the prefix is removed before routing, so the router and every controller keep seeing paths like /users/me
+        const apiUrl = req.url.slice(API_PREFIX.length) || '/';
+        handleApiRequest(req, res, apiUrl);
+        return;
+    }
+
+    if (serveFrontend == null) {
+        rejectRequest(req, res, 404, "Not found");
+        return;
+    }
+    serveFrontend(req, res).catch((error) => { // async, so its failures arrive as a rejected promise and are caught here
+        console.error("Error serving frontend file:", error);
+        if (!res.headersSent) {
+            rejectRequest(req, res, 500, "Unexpected error encountered on the server side");
+        }
+    });
+}
+
+// Handles one API request: answers CORS preflights, checks origin and content type, reads the body, then hands it to the router.
+// url is the request's address with the /api prefix already removed
+function handleApiRequest(req, res, url) {
     // 1. Intercept CORS preflight OPTIONS requests early
     if (handleCorsPreflight(req, res)) {
         return;
     }
     const method = req.method; // extract HTTP method directly from req
-    const url = req.url; // extract URL path directly from req
 
     // 1b. A request that changes something must come from our own frontend. Browsers attach the Origin header to these,
     // so a page on another website trying to act with a visitor's cookies is refused here. Requests without an Origin
