@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# shell scripts must keep Linux line endings (LF) even on Windows, because bash on Linux cannot run a script with Windows line endings (CRLF)
+*.sh text eol=lf
