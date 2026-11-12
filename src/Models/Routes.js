@@ -109,6 +109,16 @@ const routeList = [{
 
 },
 {
+    method: "GET",
+    url: "/rooms/:id/messages",
+    controller: RoomController,
+    handler: "getRoomMessagesAsync",
+    schema: null,
+    expectedPathTypes: { id: "number" },
+    expectedSearchParamTypes: { cursor: "string", limit: "number" },
+    tokenNeeded: true
+},
+{
     method: "POST",
     url: "/auth/login",
     controller: AuthController,

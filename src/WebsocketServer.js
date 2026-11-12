@@ -1,196 +1,232 @@
 const { WebSocketServer } = require('ws');
-const WebsocketManager = require('./WebsocketManager')
-const { unpack, pack } = require('msgpackr');
+const WebsocketManager = require('./WebsocketManager');
+// const { unpack, pack } = require('msgpackr'); // msgpack commented out in favor of JSON-only messaging
 const { verifyJWT } = require('./helpers/UserAuthenticator');
 const { parseCookies } = require('./helpers/Parsers');
 const APIResponseObj = require('./Models/APIResponseObj');
 const ServiceContext = require('./ServiceContext');
 
-//wss
+// Configures and mounts the WebSocket server with authentication, persistence, and Redis pub/sub
 function createWebSocketServer(server, DbPool, redisConnector) {
+    // Uses noServer mode so the HTTP upgrade handshake can be inspected and authenticated first
+    const wss = new WebSocketServer({ noServer: true }); // creates unattached WebSocket server instance
+    const socketManager = new WebsocketManager(redisConnector); // manages connection maps and Redis routing
+    redisConnector.display(); // logs initial redis state
 
-
-    //we use no server mode to handle the 'upgrade' event manually from our server file
-    const wss = new WebSocketServer({ noServer: true });//wss is the websocket server that listens for incomign websocket connections
-    const socketManager = new WebsocketManager(redisConnector);
-    redisConnector.display()
-
-    server.on('upgrade', async function upgrade(request, socket, head) {//triggered right before the websocket connection
-        //is completed on an upgrade request for http
-        //verify JWT and extract user_id
+    // Intercepts HTTP upgrade requests to verify JWT session cookies before upgrading the socket
+    server.on('upgrade', async function upgrade(request, socket, head) {
         try {
-            //parsing cookies
-            const cookies = parseCookies(request);
-            const result = await verifyJWT(cookies)//result can either be the JWT payload or a APIResponseObj
+            const cookies = parseCookies(request); // parses incoming HTTP request cookies
+            console.log('[WebSocket Upgrade] Headers origin:', request.headers.origin);
+            const result = await verifyJWT(cookies); // validates session token from cookie
+            console.log('[WebSocket Upgrade] JWT verification result:', result);
+
             if (result == null) {
-                throw new Error("Failed to get validation object");
-            }
-            else if (result instanceof APIResponseObj) {
+                throw new Error("Failed to get validation object"); // rejects if token parser returns null
+            } else if (result instanceof APIResponseObj) {
+                console.warn(`[WebSocket Upgrade Rejected]: ${result.responseStatusCode} ${result.responseTitle}`);
                 if (socket.writable) {
                     socket.write(
                         `HTTP/1.1 ${result.responseStatusCode} ${result.responseTitle}\r\n` +
                         'Content-Type: text/plain\r\n' +
                         'Connection: close\r\n' +
-                        `Content-Length: ${Buffer.byteLength(result.responseBody)}\r\n` +
-                        '\r\n' +
+                        `Content-Length: ${Buffer.byteLength(result.responseBody)}\r\n\r\n` +
                         result.responseBody
-                    );
-                    // Always physically sever the TCP connection to prevent memory leaks
-                    socket.destroy();
+                    ); // returns HTTP 401/403 status to client
+                    socket.destroy(); // terminates TCP socket to free resources
                 }
-            }
-            else {//result is indeed the jwt object
-                const user_id = result?.user_id;//grab the user_id
+            } else {
+                const user_id = result?.user_id; // extracts verified user ID from JWT payload
                 if (user_id == null || !Number.isFinite(user_id)) {
-                    throw new Error("No id associated with token");
+                    throw new Error("No valid user ID associated with token"); // rejects token with missing ID
                 }
-                //verification complete, now upgrade the request
-                //handleUpgrade is what we call for a websocket server to handle an http update
-                //this function does all the heavy lifting for us. we just need to pas in the request, the raw TCP socket, the upgradeHead
-                //it takes a callback at the very end which only gets called when the request has been updated to a ws connection, and then ws connection
-                wss.handleUpgrade(request, socket, head, function done(ws) {
-                    //label the id here
-                    ws.user_id = user_id;
-                    //server emits connection event with the ws connection we just got from the upgrade
-                    wss.emit("connection", ws);
-                })
 
+                // Upgrades the raw TCP socket to a full WebSocket stream
+                wss.handleUpgrade(request, socket, head, function done(ws) {
+                    ws.user_id = user_id; // stamps connection instance with authenticated user ID
+                    wss.emit("connection", ws); // dispatches connection event to listeners
+                });
             }
-        }
-        catch (error) {
-            //Log the actual error for your own debugging
-            console.error('[WebSocket Upgrade Error]:', error);
-            let responseBody = "unexpected error with upgrade request";
-            let responseStatusCode = 500
-            let responseTitle = "Internal Server Error";
-            // Only attempt to send a response if client hasnt been disconnected
+        } catch (error) {
+            console.error('[WebSocket Upgrade Error]:', error); // logs failure
             if (socket.writable) {
+                const responseBody = "Unexpected error during upgrade request";
                 socket.write(
-                    `HTTP/1.1 ${responseStatusCode} ${responseTitle}\r\n` +
-                    'Content-Type: text/plain\r\n' +
-                    'Connection: close\r\n' +
-                    `Content-Length: ${Buffer.byteLength(responseBody)}\r\n` +
-                    '\r\n' +
+                    "HTTP/1.1 500 Internal Server Error\r\n" +
+                    "Content-Type: text/plain\r\n" +
+                    "Connection: close\r\n" +
+                    `Content-Length: ${Buffer.byteLength(responseBody)}\r\n\r\n` +
                     responseBody
-                );
-                // Always physically sever the TCP connection to prevent memory leaks
-                socket.destroy();
+                ); // sends 500 status on internal exception
+                socket.destroy(); // tears down socket connection
             }
         }
     });
 
+    // Configures listeners and room memberships for each newly connected socket
+    wss.on('connection', async (ws) => {
+        console.log(`WebSocket client connected for user ${ws.user_id}`);
 
+        // Marks socket as alive for heartbeat ping/pong tracking
+        ws.isAlive = true;
+        ws.on("pong", () => {
+            ws.isAlive = true; // resets alive flag on receiving pong response
+        });
 
-    wss.on('connection', async (ws) => {//for every connection there is a ws(websocket) object for that connection
-        console.log("Connected");
-        //get rooms associated with the user
-        //use the service context to create a room service for us
-        const serviceContext = await ServiceContext.create(DbPool);
-        let rooms;
-        try {
-            const roomService = serviceContext.createRoomService();
-
-            //use the roomService to retrieve the rooms we need on connection
-            rooms = await serviceContext.callServiceMethod(roomService, async (service) => {
-                return await service.getRoomsPerUserAsync(ws.user_id, null, null, 50);
-            })
-        }
-        finally {
-            //the context holds a pool client until close() is called. Without this every websocket connection
-            //kept one forever, and once the pool's 10 clients were used up every http request would hang
-            await serviceContext.close();
-        }
-
-        //add rooms to the socketManager
-
-        socketManager.addRoomsToUser(rooms, ws?.user_id);//adds rooms to a user
-        await socketManager.addConnectionToRooms(rooms, ws);
-        socketManager.display();
-        await redisConnector.display();
-
-
-
-        //primary events: message,close,error
-        ws.on('message', async (data, isBinary) => {
-            //data is in form Buffer
-            try {
-                let message, room_id;
-                if (!isBinary) {
-                    data = JSON.parse(data.toString("utf-8"));//can convert a Buffer to a string like this
-                    room_id = data?.room_id;
-                    message = data?.message;
-
-                }
-                else {
-                    data = unpack(data);
-                    room_id = data?.room_id;
-                    message = data?.message;
-                }
-                console.log(`Binary was: ${isBinary} and data is ${data} ${typeof data}`);
-                //ws.id is how you give connections unique id's
-                if (room_id != null && message != null) {//if we were inded able to extract room and message from the incoming data
-                    if (message.toLowerCase().trim() === 'close') {
-                        ws.close();
-                    }
-                    await socketManager.transmitMessageToRedis(room_id, message, ws);
-                    console.log("transmitted Message")
-                }
-                else {
-                    console.log("could not extract data");
-                }
-
-            }
-            catch (error) {
-                console.log("Encountered error processing Message", error);
-                ws.send(JSON.stringify({ error: "Unexpected error processing message" }));//json like every other message, so the frontend only needs one parser
-
-            }
-
-        })//WebSocket object inherits from EventEmitter, so it can emit events
-
+        // Handles socket disconnection
         ws.on('close', async () => {
             try {
-                //closing a connection means we need to remove the user associated with the connection and then also remove the connection
-                await socketManager.deleteUser(ws?.user_id, ws);
-                socketManager.display()
+                await socketManager.deleteUser(ws?.user_id, ws); // unbinds connection from room maps
+                socketManager.display();
+            } catch (error) {
+                console.error("Error deleting user on close event:", error); // logs disconnect error
             }
-            catch (error) {
-                console.log("error deleting the user on the close event: ", error);
+        });
 
-            }
-        })
+        // Handles socket transmission errors
         ws.on('error', async (error) => {
             try {
-                //closing a connection means we need to remove the user associated with the connection and then also remove the connection
-                await socketManager.deleteUser(ws?.user_id, ws);
-                socketManager.display()
-
+                await socketManager.deleteUser(ws?.user_id, ws); // unbinds connection on error
+                socketManager.display();
+            } catch (err) {
+                console.error("Error deleting user on error event:", err);
             }
-            catch (error) {
-                console.log("error deleting the user on the error event: ", error);
-
-            }
-        })
-
-        //websocket is deemed as alive
-        ws.isAlive = true;
-        ws.on("pong", () => {//when the webv socket recieves the "pong" event from the client, then it is alive so we set alive to true
-            ws.isAlive = true;
         });
-    })
 
+        // Message handler attached immediately so early messages are not dropped while database queries run
+        ws.on('message', async (data) => {
+            let parsedPayload;
+            try {
+                // Parses incoming data as UTF-8 JSON
+                parsedPayload = JSON.parse(data.toString("utf-8")); // converts Buffer to object
+            } catch (parseError) {
+                console.warn("Received malformed JSON over WebSocket:", parseError);
+                ws.send(JSON.stringify({
+                    type: "message:error",
+                    code: "INVALID_MESSAGE",
+                    error: "Payload must be valid JSON"
+                })); // notifies sender of parse failure
+                return;
+            }
+
+            // Normalizes payload supporting both draft format { content } and legacy { message }
+            const room_id = parsedPayload?.room_id; // target room identifier
+            const client_message_id = parsedPayload?.client_message_id || null; // browser-generated tracking ID
+            const content = parsedPayload?.content ?? parsedPayload?.message; // extracts message text
+
+            // Validates presence and types of required fields
+            if (room_id == null || !Number.isFinite(room_id) || typeof content !== 'string') {
+                ws.send(JSON.stringify({
+                    type: "message:error",
+                    room_id: room_id || null,
+                    client_message_id,
+                    code: "INVALID_MESSAGE",
+                    error: "room_id and non-empty content string are required"
+                })); // rejects missing attributes
+                return;
+            }
+
+            // Validates character length boundary
+            const trimmedContent = content.trim(); // strips surrounding whitespace
+            if (trimmedContent.length < 1 || trimmedContent.length > 4000) {
+                ws.send(JSON.stringify({
+                    type: "message:error",
+                    room_id,
+                    client_message_id,
+                    code: "INVALID_MESSAGE",
+                    error: "Message content must be between 1 and 4000 characters"
+                })); // rejects empty or oversized text
+                return;
+            }
+
+            // Verifies sender enrollment in the target room
+            if (!socketManager.checkUserRoomMembership(ws.user_id, room_id)) {
+                ws.send(JSON.stringify({
+                    type: "message:error",
+                    room_id,
+                    client_message_id,
+                    code: "NOT_A_MEMBER",
+                    error: "You are not a member of this room"
+                })); // rejects message to non-member room
+                return;
+            }
+
+            try {
+                // Persists message to PostgreSQL before broadcasting (Option A)
+                const serviceContext = await ServiceContext.create(DbPool); // opens database client from pool
+                let savedMessage;
+                try {
+                    const messageService = serviceContext.createMessageService(); // instantiates message service
+                    savedMessage = await serviceContext.callServiceMethod(messageService, async (service) => {
+                        return await service.saveMessageAsync(room_id, ws.user_id, trimmedContent); // executes database insert
+                    });
+                } finally {
+                    await serviceContext.close(); // releases database client back to pool
+                }
+
+                // Prepares broadcast payload formatted according to draft message protocol
+                const broadcastPayload = {
+                    type: "message:new",
+                    client_message_id, // echoes back sender's client ID for optimistic matching
+                    message: savedMessage, // includes official ID, sender username, and server timestamp
+                };
+
+                // Publishes confirmed message through Redis to deliver to all room subscribers
+                await socketManager.transmitMessageToRedis(room_id, broadcastPayload, ws);
+                console.log(`Saved and broadcast message in room ${room_id} for user ${ws.user_id}`);
+            } catch (error) {
+                console.error("Error processing and persisting message:", error);
+                ws.send(JSON.stringify({
+                    type: "message:error",
+                    room_id,
+                    client_message_id,
+                    code: error.statusCode === 403 ? "NOT_A_MEMBER" : "SERVER_ERROR",
+                    error: error.message || "Failed to save message"
+                })); // sends error feedback strictly to sender
+            }
+        });
+
+        // Loads rooms associated with this user from the database and subscribes to their Redis channels
+        const serviceContext = await ServiceContext.create(DbPool);
+        let rooms = [];
+        try {
+            const roomService = serviceContext.createRoomService();
+            rooms = await serviceContext.callServiceMethod(roomService, async (service) => {
+                return await service.getRoomsPerUserAsync(ws.user_id, null, null, 50); // fetches up to 50 user rooms
+            });
+        } catch (err) {
+            console.error("Failed to load user rooms on connection:", err);
+        } finally {
+            await serviceContext.close(); // guarantees client release to avoid exhausting pool
+        }
+
+        // Binds socket and user to the loaded rooms
+        socketManager.addRoomsToUser(rooms, ws?.user_id); // registers room IDs in user map
+        await socketManager.addConnectionToRooms(rooms, ws); // adds socket to room maps and Redis subscribers
+        socketManager.display();
+        await redisConnector.display();
+    });
+
+    // Error handler for the WebSocket server instance
     wss.on('error', (error) => {
-        console.log("Encountered error with websocket server", error);
-    })
+        console.error("Encountered error with WebSocket server:", error);
+    });
 
-    //Heart beat ping/pong 
-    const interval = setInterval(() => {//every 30 seconds we go through each client and ping that client and turn their alive boolean false
+    // Heartbeat ping interval: terminates dead connections every 30 seconds
+    const interval = setInterval(() => {
         wss.clients.forEach((ws) => {
-            if (!ws.isAlive) return ws.terminate();
-            ws.isAlive = false;
-            ws.ping();
+            if (!ws.isAlive) {
+                return ws.terminate(); // forcefully closes socket if no pong was returned
+            }
+            ws.isAlive = false; // clears alive flag before issuing new ping
+            ws.ping(); // sends heartbeat ping frame to client
         });
     }, 30000);
 
+    // Clears heartbeat timer if server closes
+    wss.on('close', () => {
+        clearInterval(interval); // prevents timer leak on server shutdown
+    });
 }
-module.exports = createWebSocketServer
+
+module.exports = createWebSocketServer;

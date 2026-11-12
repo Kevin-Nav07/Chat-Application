@@ -1,6 +1,7 @@
 const AuthService = require('./Services/AuthService');
 const RoomService = require('./Services/RoomService');
 const UserService = require('./Services/UserService');
+const MessageService = require('./Services/MessageService');
 
 class ServiceContext {
     #_dbClient;
@@ -26,6 +27,10 @@ class ServiceContext {
 
     createAuthService() {
         return new AuthService(this.#_dbClient);
+    }
+
+    createMessageService() {
+        return new MessageService(this.#_dbClient);
     }
 
     async close() {
